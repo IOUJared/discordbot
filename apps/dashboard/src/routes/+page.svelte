@@ -72,7 +72,7 @@
       nextParams.delete("api")
       const suffix = nextParams.toString()
       const next = `${location.pathname}${suffix.length === 0 ? "" : `?${suffix}`}`
-      history.replaceState(null, "", next || location.pathname)
+      window.history.replaceState(null, "", next || location.pathname)
     }
     return finalApiUrl
   }

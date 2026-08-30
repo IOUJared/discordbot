@@ -1,13 +1,9 @@
-import type {
-  MediaProviderSettings,
-  LoopMode,
-  PlayerSnapshot,
-  QueueItem,
-} from "@discord-music/contracts"
+import type { MediaProviderSettings } from "@discord-music/contracts"
+import { PlayerSnapshotSchema, QueueItemSchema } from "@discord-music/contracts"
 
-const artworkUrl = "/artwork-mountain.png"
+const artworkUrl = "https://showcase.invalid/artwork-mountain.png"
 
-export const showcaseItem: QueueItem = {
+export const showcaseItem = QueueItemSchema.parse({
   id: "showcase-queue",
   track: {
     id: "showcase-track",
@@ -20,21 +16,9 @@ export const showcaseItem: QueueItem = {
   },
   requestedBy: "showcase-user",
   addedAt: "2026-08-29T12:00:00.000Z",
-}
+})
 
-const loopQueue: LoopMode = "queue"
-
-const basePlayerDefaults = {
-  guildId: "showcase-guild",
-  seekable: true,
-  positionMs: 0,
-  volume: 72,
-  isPaused: true,
-  loopMode: "off" as LoopMode,
-}
-
-export const showcasePlayer: PlayerSnapshot = {
-  ...basePlayerDefaults,
+export const showcasePlayer = PlayerSnapshotSchema.parse({
   guildId: "showcase-guild",
   queue: [showcaseItem],
   currentItem: showcaseItem,
@@ -42,16 +26,19 @@ export const showcasePlayer: PlayerSnapshot = {
   positionMs: 74_000,
   volume: 72,
   isPaused: false,
-  loopMode: loopQueue,
-}
+  loopMode: "queue",
+})
 
-export const emptyPlayer: PlayerSnapshot = {
-  ...basePlayerDefaults,
+export const emptyPlayer = PlayerSnapshotSchema.parse({
   guildId: "showcase-guild",
   queue: [],
   currentItem: null,
   seekable: false,
-}
+  positionMs: 0,
+  volume: 72,
+  isPaused: true,
+  loopMode: "off",
+})
 
 export const connectedSettings: MediaProviderSettings = {
   preference: "mock_tidal_first",
