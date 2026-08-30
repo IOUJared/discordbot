@@ -53,7 +53,7 @@ describe("YouTube yt-dlp boundary", () => {
     const args = youtubeSearchArgs(payload)
 
     // Then
-    expect(args.at(-1)).toBe(`ytsearch5:${payload}`)
+    expect(args.at(-1)).toBe(`ytsearch10:${payload}`)
     expect(args).toContain("--flat-playlist")
     expect(args).not.toContain("-f")
   })
@@ -77,6 +77,97 @@ describe("YouTube yt-dlp boundary", () => {
     // Then
     expect(results.at(0)?.track.artworkUrl).toBe("https://i.ytimg.com/vi/video-2/hqdefault.jpg")
     expect(results.at(0)?.track.url).toBe("https://www.youtube.com/watch?v=video-2")
+  })
+
+  it("ranks a verified official artist upload above an unofficial copy", () => {
+    // Given
+    const output = JSON.stringify({
+      entries: [
+        {
+          id: "fan-copy",
+          title: "Northern Lines (Official Video)",
+          uploader: "Music Reuploads",
+          channel_is_verified: false,
+          duration: 240,
+        },
+        {
+          id: "artist-upload",
+          title: "Northern Lines (Official Music Video)",
+          uploader: "Small Hours",
+          channel_is_verified: true,
+          duration: 240,
+        },
+      ],
+    })
+
+    // When
+    const results = parseSearchOutput(output)
+
+    // Then
+    expect(results.map((result) => result.track.id)).toEqual(["artist-upload"])
+  })
+
+  it("collapses duplicate audio video and lyric uploads of the same song", () => {
+    // Given
+    const output = JSON.stringify({
+      entries: [
+        {
+          id: "official-video",
+          title: "Small Hours - Northern Lines (Official Video) feat. North Wind",
+          uploader: "Small Hours",
+          channel_is_verified: true,
+          duration: 240,
+        },
+        {
+          id: "official-audio",
+          title: "Small Hours - Northern Lines (Official Audio) ft. North Wind",
+          uploader: "Small Hours",
+          channel_is_verified: true,
+          duration: 240,
+        },
+        {
+          id: "lyrics",
+          title: "Small Hours - Northern Lines Lyrics",
+          uploader: "Lyrics Channel",
+          channel_is_verified: true,
+          duration: 240,
+        },
+      ],
+    })
+
+    // When
+    const results = parseSearchOutput(output)
+
+    // Then
+    expect(results.map((result) => result.track.id)).toEqual(["official-video"])
+  })
+
+  it("keeps meaningful alternate versions as separate choices", () => {
+    // Given
+    const output = JSON.stringify({
+      entries: [
+        {
+          id: "studio",
+          title: "Small Hours - Northern Lines (Official Video)",
+          uploader: "Small Hours",
+          channel_is_verified: true,
+          duration: 240,
+        },
+        {
+          id: "remix",
+          title: "Small Hours - Northern Lines (Midnight Remix)",
+          uploader: "Small Hours",
+          channel_is_verified: true,
+          duration: 260,
+        },
+      ],
+    })
+
+    // When
+    const results = parseSearchOutput(output)
+
+    // Then
+    expect(results.map((result) => result.track.id)).toEqual(["studio", "remix"])
   })
 
   it("caches normalized repeat searches until the cache entry expires", async () => {

@@ -18,6 +18,7 @@ const searchEntrySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   uploader: z.string().min(1),
+  channel_is_verified: z.boolean().nullable().optional(),
   duration: z.number().nonnegative(),
   thumbnail: z.url().optional(),
 })
@@ -46,6 +47,12 @@ const resolvedOutputSchema = z.object({
 const processTimeoutMs = 20_000
 const defaultSearchCacheTtlMs = 30_000
 const defaultSearchCacheCapacity = 100
+const maximumSearchResults = 5
+const duplicateQualifier =
+  /[([]\s*(?:official(?:\s+music)?\s+video|official\s+audio|lyrics?(?:\s+video)?|audio|visuali[sz]er)\s*[)\]]/giu
+const featuredArtists = /\b(?:ft|feat|featuring)\.?\s+.*$/giu
+const trailingDuplicateQualifier =
+  /\s+(?:official(?:\s+music)?\s+video|official\s+audio|lyrics?(?:\s+video)?|visuali[sz]er)\s*$/giu
 
 type YouTubeMusicSourceOptions = {
   readonly now?: () => number
@@ -64,27 +71,56 @@ export function youtubeSearchArgs(query: string): readonly string[] {
     "--flat-playlist",
     "--no-playlist",
     "--no-warnings",
-    `ytsearch5:${query}`,
+    `ytsearch10:${query}`,
   ]
 }
 
 export function parseSearchOutput(output: string): readonly SearchResult[] {
   const parsed = searchOutputSchema.parse(JSON.parse(output))
-  return parsed.entries.map((entry, index) => {
-    return {
-      track: TrackSchema.parse({
-        id: entry.id,
-        provider: "youtube",
-        title: entry.title,
-        artist: entry.uploader,
-        url: `https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}`,
-        durationMs: DurationMsSchema.parse(Math.round(entry.duration * 1_000)),
-        artworkUrl:
-          entry.thumbnail ?? `https://i.ytimg.com/vi/${encodeURIComponent(entry.id)}/hqdefault.jpg`,
-      }),
-      score: Math.max(0, 1 - index * 0.1),
-    }
-  })
+  const ranked = parsed.entries
+    .map((entry, index) => ({
+      entry,
+      index,
+      official:
+        entry.channel_is_verified === true &&
+        (/\bofficial\b/iu.test(entry.title) || /(?:\s+-\s+topic|\bvevo)$/iu.test(entry.uploader)),
+    }))
+    .sort(
+      (left, right) => Number(right.official) - Number(left.official) || left.index - right.index,
+    )
+  const seenSongs = new Set<string>()
+
+  return ranked
+    .flatMap(({ entry }, index) => {
+      const words = entry.title
+        .normalize("NFKC")
+        .replace(duplicateQualifier, " ")
+        .replace(featuredArtists, " ")
+        .replace(trailingDuplicateQualifier, " ")
+        .toLocaleLowerCase("en-US")
+        .match(/[\p{L}\p{N}]+/gu)
+      const songKey = words?.join(" ") ?? entry.title.toLocaleLowerCase("en-US")
+      if (seenSongs.has(songKey)) {
+        return []
+      }
+      seenSongs.add(songKey)
+
+      return {
+        track: TrackSchema.parse({
+          id: entry.id,
+          provider: "youtube",
+          title: entry.title,
+          artist: entry.uploader,
+          url: `https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}`,
+          durationMs: DurationMsSchema.parse(Math.round(entry.duration * 1_000)),
+          artworkUrl:
+            entry.thumbnail ??
+            `https://i.ytimg.com/vi/${encodeURIComponent(entry.id)}/hqdefault.jpg`,
+        }),
+        score: Math.max(0, 1 - index * 0.1),
+      }
+    })
+    .slice(0, maximumSearchResults)
 }
 
 export function parseResolvedOutput(output: string): RemotePlayableMedia {
