@@ -2,15 +2,18 @@ import { generateDependencyReport } from "@discordjs/voice"
 import { describe, expect, it } from "vitest"
 
 describe("Discord voice dependencies", () => {
-  it("loads the voice runtime and an Opus implementation", () => {
+  it("loads the voice runtime and the native Opus implementation", () => {
     // Given
     const report = generateDependencyReport()
 
     // When
     const hasVoiceRuntime = report.includes("@discordjs/voice")
-    const hasOpus = report.includes("@discordjs/opus") || report.includes("opusscript")
+    const hasNativeOpus = !report.includes("@discordjs/opus: not found")
 
     // Then
-    expect({ hasVoiceRuntime, hasOpus }).toEqual({ hasVoiceRuntime: true, hasOpus: true })
+    expect({ hasVoiceRuntime, hasNativeOpus }).toEqual({
+      hasVoiceRuntime: true,
+      hasNativeOpus: true,
+    })
   })
 })
