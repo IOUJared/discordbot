@@ -605,6 +605,63 @@ test("Given an ultrawide desktop When the room loads Then the workspace fills th
   })
 })
 
+test("Given a 1440p canvas When the room loads Then the interface scales with the available space", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 2560, height: 1440 })
+  await mockWire(page)
+  await page.goto("/#code=scaled-canvas")
+  await expect(page.getByTestId("current-track")).toHaveAttribute("data-track-id", "track-current")
+
+  const geometry = await page.evaluate(() => {
+    const art = document.querySelector(".now .art")?.getBoundingClientRect()
+    const now = document.querySelector(".now")?.getBoundingClientRect()
+    const volume = document.querySelector(".now .volume")?.getBoundingClientRect()
+    const play = document.querySelector(".desktop-player-footer .play")?.getBoundingClientRect()
+    const footer = document.querySelector(".desktop-player-footer")?.getBoundingClientRect()
+    const nav = document.querySelector(".shell > nav")?.getBoundingClientRect()
+    const queue = document.querySelector(".shell > aside")?.getBoundingClientRect()
+    return {
+      bodyFontSize: getComputedStyle(document.body).fontSize,
+      artWidth: Math.round(art?.width ?? 0),
+      playHeight: Math.round(play?.height ?? 0),
+      canvasBottomGap: Math.round((now?.bottom ?? 0) - (volume?.bottom ?? 0)),
+      footerHeight: footer?.height,
+      navWidth: nav?.width,
+      queueWidth: queue?.width,
+      noHorizontalOverflow: document.body.scrollWidth === window.innerWidth,
+    }
+  })
+
+  expect(geometry).toEqual({
+    bodyFontSize: "18px",
+    artWidth: 769,
+    playHeight: 60,
+    canvasBottomGap: 45,
+    footerHeight: 144,
+    navWidth: 432,
+    queueWidth: 720,
+    noHorizontalOverflow: true,
+  })
+})
+
+test("Given a short wide desktop When the room loads Then large-canvas scaling waits for enough width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1800, height: 1100 })
+  await mockWire(page)
+  await page.goto("/#code=wide-not-large")
+  await expect(page.getByTestId("current-track")).toHaveAttribute("data-track-id", "track-current")
+
+  const geometry = await page.evaluate(() => ({
+    bodyFontSize: getComputedStyle(document.body).fontSize,
+    navWidth: document.querySelector(".shell > nav")?.getBoundingClientRect().width,
+    queueWidth: document.querySelector(".shell > aside")?.getBoundingClientRect().width,
+  }))
+
+  expect(geometry).toEqual({ bodyFontSize: "15px", navWidth: 337, queueWidth: 561 })
+})
+
 test("Given a 1080p desktop When the room loads Then the player footer does not waste vertical space", async ({
   page,
 }) => {

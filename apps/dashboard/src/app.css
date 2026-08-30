@@ -60,4 +60,12 @@ li strong { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 }
 @media(min-width:768px) and (max-width:1023px) { main { padding:var(--space-5); } }
 @media(min-width:1568px) { :root { --rail-width:337px; --queue-width:561px; } }
+@media(min-width:2200px) and (min-height:1100px) {
+  :root {
+    --space-1:clamp(4px,.35vmin,6px); --space-2:clamp(8px,.7vmin,12px); --space-3:clamp(12px,1vmin,18px); --space-4:clamp(16px,1.4vmin,24px); --space-5:clamp(20px,1.75vmin,30px); --space-6:clamp(24px,2.1vmin,36px); --space-8:clamp(32px,2.8vmin,48px); --space-10:clamp(40px,3.5vmin,60px); --space-12:clamp(48px,4.2vmin,72px);
+    --target:clamp(44px,3.5vmin,60px); --rail-width:clamp(432px,16.875vw,648px); --queue-width:clamp(720px,28.125vw,1080px); --footer-desktop:clamp(112px,10dvh,180px); --footer-art:clamp(96px,8dvh,160px);
+    --panel-max:clamp(720px,56dvh,1100px); --art-max:clamp(598px,55dvh,1100px); --queue-row:clamp(64px,5.5dvh,96px); --queue-dock-min:clamp(240px,20dvh,360px);
+    --type-display:clamp(32px,2.8vmin,48px); --type-h1:clamp(24px,2vmin,36px); --type-h2:clamp(20px,1.65vmin,30px); --type-h3:clamp(16px,1.35vmin,24px); --type-body:clamp(15px,1.25vmin,20px); --type-compact:clamp(14px,1.1vmin,18px); --type-label:clamp(12px,.9vmin,15px);
+  }
+}
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; } }
