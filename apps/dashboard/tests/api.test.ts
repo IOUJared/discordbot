@@ -9,6 +9,7 @@ const state = PlayerStateSchema.parse({
     guildId: "guild-1",
     queue: [],
     currentItem: null,
+    seekable: false,
     positionMs: 0,
     volume: 72,
     isPaused: false,

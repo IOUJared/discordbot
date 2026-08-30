@@ -34,6 +34,7 @@ export const room = {
       item("queue-6", "Slow Horizon", "Paper Atlas"),
     ],
     currentItem: item("current", "Mountain Echoes", "Harbor Lights"),
+    seekable: true,
     positionMs: 84_000,
     volume: 72,
     isPaused: false,
@@ -52,7 +53,7 @@ export const room = {
 export const emptyRoom = {
   ...room,
   version: 8,
-  player: { ...room.player, currentItem: null, queue: [], positionMs: 0 },
+  player: { ...room.player, currentItem: null, seekable: false, queue: [], positionMs: 0 },
   voice: { ...room.voice, connected: false, channelId: null },
 }
 
@@ -60,6 +61,19 @@ type WireOptions = {
   readonly state?: typeof room | typeof emptyRoom
   readonly history?: readonly ReturnType<typeof historyItem>[]
   readonly searchError?: boolean
+  readonly failure?: {
+    readonly version: 1
+    readonly type: "playback.failed"
+    readonly payload: {
+      readonly guildId: string
+      readonly queueItemId: string
+      readonly trackId: string
+      readonly provider: "youtube" | "mock_tidal"
+      readonly title: string
+      readonly artist: string
+      readonly message: "Playback failed; skipped to the next track."
+    }
+  }
 }
 
 function historyItem() {
@@ -85,6 +99,7 @@ export async function mockWire(page: Page, options: WireOptions = {}): Promise<v
         parsed.type === "auth"
       )
         socket.send(JSON.stringify({ version: 1, type: "state.snapshot", payload: state }))
+      if (options.failure !== undefined) socket.send(JSON.stringify(options.failure))
     })
   })
   await page.route("**/api/**", async (route) => route.fulfill({ json: state }))

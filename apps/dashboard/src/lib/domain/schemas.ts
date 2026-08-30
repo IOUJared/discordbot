@@ -43,6 +43,7 @@ const playerSchema = z.strictObject({
   guildId,
   queue: z.readonly(z.array(QueueItemSchema)),
   currentItem: z.nullable(QueueItemSchema),
+  seekable: z.boolean(),
   positionMs: position,
   volume,
   isPaused: z.boolean(),
@@ -72,6 +73,25 @@ export const PlayerStateMessageSchema = z.strictObject({
   type: z.literal("state.snapshot"),
   payload: PlayerStateSchema,
 })
+
+export const PlaybackFailureMessageSchema = z.strictObject({
+  version: z.literal(1),
+  type: z.literal("playback.failed"),
+  payload: z.strictObject({
+    guildId,
+    queueItemId,
+    trackId,
+    provider: z.enum(["youtube", "mock_tidal"]),
+    title: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+    artist: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+    message: z.literal("Playback failed; skipped to the next track."),
+  }),
+})
+
+export const SocketMessageSchema = z.discriminatedUnion("type", [
+  PlayerStateMessageSchema,
+  PlaybackFailureMessageSchema,
+])
 
 export const HistoryItemSchema = z.strictObject({
   id: historyItemId,

@@ -76,6 +76,7 @@ class FakeControls implements PlayerControls {
       guildId,
       queue: [queueItem],
       currentItem: queueItem,
+      seekable: true,
       positionMs: PositionMsSchema.parse(0),
       volume: VolumeSchema.parse(100),
       isPaused: false,

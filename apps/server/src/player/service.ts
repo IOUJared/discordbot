@@ -3,6 +3,7 @@ import {
   type LoopMode,
   type MediaProviderSettings,
   type MediaSourcePreference,
+  type PlaybackFailureNotification,
   type PlayerSnapshot,
   PositionMsSchema,
   type QueueItem,
@@ -14,6 +15,7 @@ import {
   VolumeSchema,
 } from "@discord-music/contracts"
 import { IdleController } from "./idle-controller.js"
+import { PlaybackFailurePublisher } from "./playback-failure.js"
 import { PlaybackHistory } from "./playback-history.js"
 import { PlaybackSession } from "./playback-session.js"
 import { QueueControls } from "./queue-controls.js"
@@ -26,6 +28,7 @@ export class PlayerService extends QueueControls {
   private readonly history: PlaybackHistory
   private readonly idle: IdleController
   private readonly playback: PlaybackSession
+  private readonly failures: PlaybackFailurePublisher
   private readonly voiceState: VoiceStateTracker
   private volume: Volume
   private loopMode: LoopMode
@@ -43,6 +46,7 @@ export class PlayerService extends QueueControls {
       void this.leave()
     })
     this.playback = new PlaybackSession(options.source, options.resourceFactory, options.clock)
+    this.failures = new PlaybackFailurePublisher(options.guildId, options.reportFailure)
     this.voiceState = new VoiceStateTracker(options.voice, () => this.emitState())
     const settings = options.settings?.get(options.guildId)
     this.volume = settings?.volume ?? VolumeSchema.parse(100)
@@ -144,6 +148,7 @@ export class PlayerService extends QueueControls {
 
   async seek(offsetMs: number): Promise<void> {
     if (this.playback.current === null) throw new RangeError("Nothing is playing")
+    if (!this.playback.seekable) throw new RangeError("Media does not support seeking")
     validateSeekOffset(offsetMs, this.playback.current.track.durationMs)
     await this.startPlayback(this.playback.current, offsetMs)
   }
@@ -194,6 +199,7 @@ export class PlayerService extends QueueControls {
       guildId: this.options.guildId,
       queue: this.queue.list(),
       currentItem: this.playback.current,
+      seekable: this.playback.seekable,
       positionMs: PositionMsSchema.parse(this.playback.position()),
       volume: this.volume,
       isPaused: this.playback.isPaused,
@@ -210,6 +216,10 @@ export class PlayerService extends QueueControls {
     return () => this.stateListeners.delete(listener)
   }
 
+  onPlaybackFailure(listener: (notification: PlaybackFailureNotification) => void): () => void {
+    return this.failures.subscribe(listener)
+  }
+
   private async startPlayback(item: QueueItem, offsetMs: number): Promise<void> {
     this.idle.cancel()
     const start = this.playback.begin(item, offsetMs)
@@ -219,11 +229,11 @@ export class PlayerService extends QueueControls {
       this.options.voice.setVolume(this.volume)
       this.options.voice.play(resource, {
         finished: async () => this.handleFinished(start.generation),
-        failed: async () => this.handleFailed(start.generation),
+        failed: async (error) => this.handleFailed(start.generation, error),
       })
       this.emitState()
     } catch (error) {
-      if (error instanceof Error) await this.handleFailed(start.generation)
+      if (error instanceof Error) await this.handleFailed(start.generation, error)
       else throw error
     }
   }
@@ -241,9 +251,11 @@ export class PlayerService extends QueueControls {
     await this.startIfIdle()
   }
 
-  private async handleFailed(generation: number): Promise<void> {
+  private async handleFailed(generation: number, error: Error): Promise<void> {
     if (!this.playback.isActive(generation) || this.playback.current === null) return
-    this.history.append(this.playback.current, this.playback.playedAt, "errored")
+    const failed = this.playback.current
+    this.history.append(failed, this.playback.playedAt, "errored")
+    this.failures.publish(failed, error)
     this.resetCurrent()
     await this.startIfIdle()
   }

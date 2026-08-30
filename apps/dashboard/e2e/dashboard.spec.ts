@@ -347,6 +347,47 @@ test("Given a dropped socket When reconnect starts Then status is exposed", asyn
   await page.screenshot({ path: "../../.omo/evidence/dashboard/reconnecting.png", fullPage: true })
 })
 
+test("Given unseekable playback fails When the event arrives Then seek is disabled and an accessible toast appears", async ({
+  page,
+}) => {
+  // Given
+  const unseekableRoom = { ...room, player: { ...room.player, seekable: false } }
+  await mockWire(page, {
+    state: unseekableRoom,
+    failure: {
+      version: 1,
+      type: "playback.failed",
+      payload: {
+        guildId: "guild-1",
+        queueItemId: "queue-current",
+        trackId: "track-current",
+        provider: "youtube",
+        title: "Mountain Echoes",
+        artist: "Harbor Lights",
+        message: "Playback failed; skipped to the next track.",
+      },
+    },
+  })
+
+  // When
+  await page.goto("/#code=unseekable-failure")
+
+  // Then
+  await expect(page.getByTestId("seek-control").getByRole("slider")).toBeDisabled()
+  await expect(page.getByTestId("seek-control").getByRole("status")).toContainText(
+    "Seeking unavailable",
+  )
+  const toast = page.getByTestId("playback-failure-toast")
+  await expect(toast).toContainText("Mountain Echoes could not be played")
+  await expect(toast).toHaveAttribute("role", "alert")
+  await page.screenshot({
+    path: "../../.omo/evidence/final-repair/seekable-failure-notifications/dashboard-failure.png",
+    fullPage: true,
+  })
+  await page.getByRole("button", { name: "Dismiss playback failure" }).click()
+  await expect(toast).toHaveCount(0)
+})
+
 test("Given OAuth callback When the listener controls playback Then the real dashboard updates", async ({
   page,
 }) => {

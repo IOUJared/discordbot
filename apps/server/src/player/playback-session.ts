@@ -18,6 +18,7 @@ export class PlaybackSession {
   private basePositionMs = 0
   private startedAtMs = 0
   private paused = false
+  private resourceSeekable = false
   private generation = 0
   private startedAt = ""
 
@@ -39,6 +40,10 @@ export class PlaybackSession {
     return this.startedAt
   }
 
+  get seekable(): boolean {
+    return this.item !== null && this.resource !== null && this.resourceSeekable
+  }
+
   begin(item: QueueItem, offsetMs: number): PlaybackStart {
     this.abort?.abort()
     const abort = new AbortController()
@@ -51,6 +56,7 @@ export class PlaybackSession {
     this.paused = false
     this.resource?.dispose()
     this.resource = null
+    this.resourceSeekable = false
     return { generation: this.generation, item, offsetMs, signal: abort.signal }
   }
 
@@ -65,6 +71,7 @@ export class PlaybackSession {
       return null
     }
     this.resource = resource
+    this.resourceSeekable = media.seekable
     return resource
   }
 
@@ -97,6 +104,7 @@ export class PlaybackSession {
     this.abort?.abort()
     this.abort = null
     this.resource = null
+    this.resourceSeekable = false
     this.item = null
     this.basePositionMs = 0
     this.paused = false

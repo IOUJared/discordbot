@@ -108,6 +108,7 @@ export const PlayerSnapshotSchema = z
     guildId: GuildIdSchema,
     queue: z.array(QueueItemSchema).readonly(),
     currentItem: QueueItemSchema.nullable(),
+    seekable: z.boolean(),
     positionMs: PositionMsSchema,
     volume: VolumeSchema,
     isPaused: z.boolean(),
@@ -116,6 +117,22 @@ export const PlayerSnapshotSchema = z
   .strict()
 
 export type PlayerSnapshot = Readonly<z.infer<typeof PlayerSnapshotSchema>>
+
+export const PlaybackFailureNotificationSchema = z
+  .object({
+    guildId: GuildIdSchema,
+    queueItemId: QueueItemIdSchema,
+    trackId: TrackIdSchema,
+    provider: TrackProviderSchema,
+    title: z.string().trim().min(1).max(512),
+    artist: z.string().trim().min(1).max(512),
+    message: z.literal("Playback failed; skipped to the next track."),
+  })
+  .strict()
+
+export type PlaybackFailureNotification = Readonly<
+  z.infer<typeof PlaybackFailureNotificationSchema>
+>
 
 export const VoiceStatusSchema = z
   .object({
@@ -208,17 +225,27 @@ export const VoiceStatusMessageSchema = z
   })
   .strict()
 
+export const PlaybackFailureMessageSchema = z
+  .object({
+    version: z.literal(1),
+    type: z.literal("playback.failed"),
+    payload: PlaybackFailureNotificationSchema,
+  })
+  .strict()
+
 export const WebSocketMessageSchema = z.discriminatedUnion("type", [
   PlayerSnapshotMessageSchema,
   QueueUpdatedMessageSchema,
   PlaybackProgressMessageSchema,
   VoiceStatusMessageSchema,
+  PlaybackFailureMessageSchema,
 ])
 
 export type PlayerSnapshotMessage = Readonly<z.infer<typeof PlayerSnapshotMessageSchema>>
 export type QueueUpdatedMessage = Readonly<z.infer<typeof QueueUpdatedMessageSchema>>
 export type PlaybackProgressMessage = Readonly<z.infer<typeof PlaybackProgressMessageSchema>>
 export type VoiceStatusMessage = Readonly<z.infer<typeof VoiceStatusMessageSchema>>
+export type PlaybackFailureMessage = Readonly<z.infer<typeof PlaybackFailureMessageSchema>>
 export type WebSocketMessage = Readonly<z.infer<typeof WebSocketMessageSchema>>
 
 export const ApiErrorSchema = z

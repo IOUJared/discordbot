@@ -2,6 +2,7 @@ import type { GuildId } from "@discord-music/contracts"
 
 import type { Clock } from "../domain/clock.js"
 import type { MusicSource, ProviderController } from "../media/types.js"
+import type { PlaybackFailureReporter } from "./playback-failure.js"
 import type {
   AudioResourceFactory,
   HistoryPort,
@@ -23,4 +24,5 @@ export type PlayerServiceOptions = {
   readonly random: () => number
   readonly settings?: SettingsPort
   readonly history?: HistoryPort
+  readonly reportFailure?: PlaybackFailureReporter
 }

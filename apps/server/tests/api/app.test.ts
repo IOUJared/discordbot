@@ -2,6 +2,7 @@ import {
   ChannelIdSchema,
   GuildIdSchema,
   type MediaProviderSettings,
+  type PlaybackFailureNotification,
   PositionMsSchema,
   QueueItemSchema,
   TrackSchema,
@@ -37,6 +38,7 @@ const item = QueueItemSchema.parse({
 class FakePlayer implements PlayerApi {
   readonly calls: string[] = []
   private readonly listeners = new Set<() => void>()
+  private readonly failureListeners = new Set<(notification: PlaybackFailureNotification) => void>()
   connected = false
   providers: MediaProviderSettings = { preference: "youtube_only", mockTidalConnected: false }
   snapshot() {
@@ -44,6 +46,7 @@ class FakePlayer implements PlayerApi {
       guildId,
       queue: [],
       currentItem: null,
+      seekable: false,
       positionMs: PositionMsSchema.parse(0),
       volume: VolumeSchema.parse(100),
       isPaused: false,
@@ -62,6 +65,15 @@ class FakePlayer implements PlayerApi {
   onStateChange(listener: () => void) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+  onPlaybackFailure(listener: (notification: PlaybackFailureNotification) => void) {
+    this.failureListeners.add(listener)
+    return () => {
+      this.failureListeners.delete(listener)
+    }
+  }
+  emitPlaybackFailure(notification: PlaybackFailureNotification) {
+    for (const listener of this.failureListeners) listener(notification)
   }
   async play() {
     return item
@@ -476,6 +488,53 @@ describe("Fastify API", () => {
     expect(second.payload.version).toBeGreaterThan(first.payload.version)
   })
 
+  it("Given authenticated WebSocket playback When a track fails Then a versioned safe event arrives", async () => {
+    // Given
+    const { app, player } = await fixture()
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const socket = new WebSocket(`${address.replace("http", "ws")}/ws`, {
+      origin: "https://music.example.com",
+    })
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", () => {
+        socket.send(JSON.stringify({ type: "auth", token: "valid" }))
+        resolve()
+      })
+      socket.once("error", reject)
+    })
+    await nextMessage(socket)
+
+    // When
+    const messagePromise = nextRawMessage(socket)
+    player.emitPlaybackFailure({
+      guildId,
+      queueItemId: item.id,
+      trackId: track.id,
+      provider: track.provider,
+      title: track.title,
+      artist: track.artist,
+      message: "Playback failed; skipped to the next track.",
+    })
+    const message = await messagePromise
+    socket.close()
+
+    // Then
+    expect(message).toEqual({
+      version: 1,
+      type: "playback.failed",
+      payload: {
+        guildId: "guild",
+        queueItemId: "item",
+        trackId: "track",
+        provider: "youtube",
+        title: "Example",
+        artist: "Artist",
+        message: "Playback failed; skipped to the next track.",
+      },
+    })
+    expect(JSON.stringify(message)).not.toContain("stack")
+  })
+
   it("Given a foreign WebSocket Origin When connected Then policy rejection closes it", async () => {
     const { app } = await fixture()
     const address = await app.listen({ host: "127.0.0.1", port: 0 })
@@ -525,6 +584,13 @@ async function nextMessage(socket: WebSocket): Promise<z.infer<typeof socketMess
     socket.once("message", (data) =>
       resolve(socketMessageSchema.parse(JSON.parse(data.toString()))),
     )
+    socket.once("error", reject)
+  })
+}
+
+async function nextRawMessage(socket: WebSocket): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    socket.once("message", (data) => resolve(JSON.parse(data.toString())))
     socket.once("error", reject)
   })
 }

@@ -3,6 +3,7 @@ import type {
   LoopMode,
   MediaProviderSettings,
   MediaSourcePreference,
+  PlaybackFailureNotification,
   PlayerSnapshot,
   QueueItem,
   QueueItemId,
@@ -17,6 +18,7 @@ export interface PlayerApi {
   snapshot(): PlayerSnapshot
   voiceStatus(): VoiceStatus
   onStateChange(listener: () => void): () => void
+  onPlaybackFailure(listener: (notification: PlaybackFailureNotification) => void): () => void
   play(query: string, requestedBy: UserId, channelId: ChannelId): Promise<QueueItem>
   enqueue(track: Track, requestedBy: UserId): Promise<QueueItem>
   startIfIdle(): Promise<void>

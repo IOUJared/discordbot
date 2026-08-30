@@ -16,6 +16,7 @@ import { secureRandom } from "../db/random.js"
 import { PlayerCommandService } from "../discord/command-service.js"
 import { createCommandRouter } from "../discord/commands.js"
 import { registerInteractionHandler } from "../discord/interaction.js"
+import { wireDiscordPlaybackFailureNotifier } from "../discord/playback-failure-notifier.js"
 import { wireDiscordPresence } from "../discord/presence-publisher.js"
 import { DiscordAudioResourceFactory } from "../discord/resource-factory.js"
 import { DiscordVoiceGateway } from "../discord/voice-gateway.js"
@@ -23,6 +24,7 @@ import { systemClock } from "../domain/clock.js"
 import { MockTidalMusicSource } from "../media/mock-tidal.js"
 import { PrioritizedMusicSource } from "../media/prioritized-source.js"
 import { YouTubeMusicSource } from "../media/youtube.js"
+import type { PlaybackFailureLog } from "../player/playback-failure.js"
 import { systemScheduler } from "../player/ports.js"
 import { PlayerService } from "../player/service.js"
 import { assertDependencies, checkDependencies, type DependencyStatus } from "./dependencies.js"
@@ -64,6 +66,7 @@ export async function runProduction(
   const voice = new DiscordVoiceGateway({
     adapterForGuild: () => requireGuild(client, guildId).voiceAdapterCreator,
   })
+  let reportPlaybackFailure = (_failure: PlaybackFailureLog): void => undefined
   const player = new PlayerService({
     guildId,
     source,
@@ -77,6 +80,7 @@ export async function runProduction(
     random: Math.random,
     settings: persistence.settings,
     history: persistence.history,
+    reportFailure: (failure) => reportPlaybackFailure(failure),
   })
   const app = await buildApp({
     config,
@@ -102,6 +106,13 @@ export async function runProduction(
   })
   const authorizedUserIds = new Set<UserId>(
     [...config.authorizedUserIds].map((id) => UserIdSchema.parse(id)),
+  )
+  reportPlaybackFailure = (failure) => app.log.error(failure, failure.event)
+  wireDiscordPlaybackFailureNotifier(
+    client,
+    player,
+    UserIdSchema.parse(config.discordOwnerId),
+    (error) => app.log.warn({ err: error }, "discord.playback-failure-notification.failed"),
   )
   registerInteractionHandler(
     client,

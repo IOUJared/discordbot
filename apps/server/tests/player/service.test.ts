@@ -49,6 +49,7 @@ const trackOne = track(1)
 class FakeSource implements MusicSource {
   resolveCount = 0
   failTrackId: string | null = null
+  seekable = true
 
   async search() {
     return [trackOne, track(2), track(3)].map((track) => ({ track, score: 1 }))
@@ -57,7 +58,7 @@ class FakeSource implements MusicSource {
   async resolve(track: Track) {
     this.resolveCount += 1
     if (track.id === this.failTrackId) throw new RangeError("unplayable fixture")
-    return playable
+    return { ...playable, seekable: this.seekable }
   }
 }
 
@@ -140,6 +141,7 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
   const scheduler = new FakeScheduler()
   let sequence = 0
   const resources: number[] = []
+  const failures: unknown[] = []
   const factory: AudioResourceFactory = {
     create: async (_media, offsetMs) => {
       resources.push(offsetMs)
@@ -157,9 +159,10 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
     voiceIdleTimeoutMs,
     nextId: () => `generated-${sequence++}`,
     random: () => 0,
+    reportFailure: (failure) => failures.push(failure),
     ...(settings === undefined ? {} : { settings }),
   })
-  return { clock, providers, resources, scheduler, service, source, voice }
+  return { clock, failures, providers, resources, scheduler, service, source, voice }
 }
 
 describe("PlayerService", () => {
@@ -270,6 +273,52 @@ describe("PlayerService", () => {
 
     // Then
     await expect(seek).rejects.toThrow(RangeError)
+  })
+
+  it("publishes resolved resource seekability and rejects seek without stopping playback", async () => {
+    // Given
+    const { service, source } = harness()
+    source.seekable = false
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+
+    // When
+    const seek = service.seek(12_000)
+
+    // Then
+    expect(service.snapshot().seekable).toBe(false)
+    await expect(seek).rejects.toThrow("Media does not support seeking")
+    expect(service.snapshot().currentItem?.track.id).toBe("track-1")
+  })
+
+  it("reports a redacted failure event and continues with the next item", async () => {
+    // Given
+    const { failures, service, source } = harness()
+    const notifications: unknown[] = []
+    service.onPlaybackFailure((notification) => notifications.push(notification))
+    source.failTrackId = "track-1"
+    await service.enqueue(trackOne, userId)
+    await service.enqueue(track(2), userId)
+
+    // When
+    await service.startIfIdle()
+
+    // Then
+    expect(failures).toEqual([
+      expect.objectContaining({
+        event: "player.playback.failed",
+        queueItemId: "generated-0",
+        error: { type: "error", message: "[Redacted]" },
+      }),
+    ])
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        queueItemId: "generated-0",
+        trackId: "track-1",
+        message: "Playback failed; skipped to the next track.",
+      }),
+    ])
+    expect(service.snapshot().currentItem?.track.id).toBe("track-2")
   })
 
   it("disconnects voice after the idle timer fires", async () => {

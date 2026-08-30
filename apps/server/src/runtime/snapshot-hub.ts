@@ -1,16 +1,25 @@
-import type { PlayerState, PlayerStateMessage } from "@discord-music/contracts"
+import type {
+  PlaybackFailureMessage,
+  PlayerState,
+  PlayerStateMessage,
+} from "@discord-music/contracts"
 
 import type { PlayerApi } from "../api/types.js"
 
-export type SnapshotListener = (message: PlayerStateMessage) => void
+export type SnapshotListener = (message: PlayerStateMessage | PlaybackFailureMessage) => void
 
 export class SnapshotHub {
   private version = 0
   private readonly listeners = new Set<SnapshotListener>()
   private readonly unsubscribe: () => void
+  private readonly unsubscribeFailures: () => void
 
   constructor(private readonly player: PlayerApi) {
     this.unsubscribe = player.onStateChange(() => this.changed())
+    this.unsubscribeFailures = player.onPlaybackFailure((payload) => {
+      const message = { version: 1, type: "playback.failed", payload } as const
+      for (const listener of this.listeners) listener(message)
+    })
   }
 
   snapshot(): PlayerState {
@@ -37,6 +46,7 @@ export class SnapshotHub {
 
   close(): void {
     this.unsubscribe()
+    this.unsubscribeFailures()
     this.listeners.clear()
   }
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   MediaProviderSettingsSchema,
   MediaSourcePreferenceSchema,
+  PlaybackFailureMessageSchema,
   PlayerSnapshotSchema,
   SetVolumeRequestSchema,
   TrackSchema,
@@ -72,6 +73,7 @@ describe("contracts", () => {
       guildId: "guild:001",
       queue: [firstQueueItem, secondQueueItem],
       currentItem: firstQueueItem,
+      seekable: false,
       positionMs: 12_345,
       volume: 100,
       isPaused: false,
@@ -85,6 +87,7 @@ describe("contracts", () => {
     // Then: the serialized wire value retains the parsed playback state.
     expect(JSON.parse(serialized)).toMatchObject({
       currentItem: { id: "queue:001" },
+      seekable: false,
       loopMode: "queue",
       volume: 100,
     })
@@ -101,6 +104,7 @@ describe("contracts", () => {
       guildId: "guild:001",
       queue: [],
       currentItem: { ...firstQueueItem, track: invalidIdentifierTrack },
+      seekable: false,
       positionMs: 0,
       volume: 100,
       isPaused: false,
@@ -110,6 +114,7 @@ describe("contracts", () => {
       guildId: "guild:001",
       queue: [],
       currentItem: { ...firstQueueItem, track: negativeDurationTrack },
+      seekable: false,
       positionMs: 0,
       volume: 100,
       isPaused: false,
@@ -141,6 +146,7 @@ describe("contracts", () => {
       guildId: "guild:001",
       queue: [firstQueueItem, secondQueueItem],
       currentItem: null,
+      seekable: false,
       positionMs: 0,
       volume: 100,
       isPaused: true,
@@ -153,5 +159,29 @@ describe("contracts", () => {
     // Then: both entries remain distinguishable even though their Track IDs match.
     expect(parsed.queue.map((item) => item.track.id)).toEqual(["youtube:abc123", "youtube:abc123"])
     expect(new Set(parsed.queue.map((item) => item.id)).size).toBe(2)
+  })
+
+  it("parses a redacted versioned playback failure notification", () => {
+    // Given
+    const message = {
+      version: 1,
+      type: "playback.failed",
+      payload: {
+        guildId: "guild:001",
+        queueItemId: "queue:001",
+        trackId: "youtube:abc123",
+        provider: "youtube",
+        title: "A deterministic track",
+        artist: "Artist",
+        message: "Playback failed; skipped to the next track.",
+      },
+    }
+
+    // When
+    const parsed = PlaybackFailureMessageSchema.parse(message)
+
+    // Then
+    expect(parsed.payload).toEqual(message.payload)
+    expect(JSON.stringify(parsed)).not.toContain("stack")
   })
 })

@@ -4,14 +4,51 @@ import { TrackSchema } from "../src/lib/domain/schemas.js"
 import {
   controlsFor,
   parseSnapshotMessage,
+  parseSocketMessage,
   requireVoiceSelection,
 } from "../src/lib/domain/state.js"
 
 describe("state derivation", () => {
   it("Given no current item When controls derive Then playback commands are disabled", () => {
     expect(
-      controlsFor({ hasCurrent: false, connected: true, paused: false, busy: false }).canPause,
+      controlsFor({
+        hasCurrent: false,
+        connected: true,
+        paused: false,
+        busy: false,
+        seekable: false,
+      }).canPause,
     ).toBe(false)
+  })
+
+  it("Given active unseekable media When controls derive Then seeking is disabled", () => {
+    expect(
+      controlsFor({
+        hasCurrent: true,
+        connected: true,
+        paused: false,
+        busy: false,
+        seekable: false,
+      }).canSeek,
+    ).toBe(false)
+  })
+
+  it("Given a playback failure websocket event When parsed Then its safe notification is accepted", () => {
+    const message = {
+      version: 1,
+      type: "playback.failed",
+      payload: {
+        guildId: "guild-1",
+        queueItemId: "queue-1",
+        trackId: "track-1",
+        provider: "youtube",
+        title: "Unavailable track",
+        artist: "Artist",
+        message: "Playback failed; skipped to the next track.",
+      },
+    }
+
+    expect(parseSocketMessage(message)).toMatchObject({ success: true, data: message })
   })
 
   it("Given disconnected voice and no selection When adding Then a channel is required", () => {

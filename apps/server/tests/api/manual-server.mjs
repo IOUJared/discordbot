@@ -5,6 +5,7 @@ const guildId = "guild"
 const channelId = "voice"
 const userId = "manual-user"
 const listeners = new Set()
+const failureListeners = new Set()
 let connected = false
 let volume = 100
 let paused = false
@@ -23,6 +24,7 @@ const player = {
     guildId,
     queue,
     currentItem: null,
+    seekable: false,
     positionMs: 0,
     volume,
     isPaused: paused,
@@ -38,6 +40,10 @@ const player = {
   onStateChange: (listener) => {
     listeners.add(listener)
     return () => listeners.delete(listener)
+  },
+  onPlaybackFailure: (listener) => {
+    failureListeners.add(listener)
+    return () => failureListeners.delete(listener)
   },
   play: async () => queue[0],
   enqueue: async (track, requestedBy) => {

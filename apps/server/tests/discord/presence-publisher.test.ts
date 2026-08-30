@@ -47,6 +47,7 @@ function idleSnapshot(): PlayerSnapshot {
     guildId: GuildIdSchema.parse("guild-1"),
     queue: [],
     currentItem: null,
+    seekable: false,
     positionMs: PositionMsSchema.parse(0),
     volume: VolumeSchema.parse(100),
     isPaused: false,
@@ -70,6 +71,7 @@ function playingSnapshot(): PlayerSnapshot {
         durationMs: DurationMsSchema.parse(1_000),
       },
     },
+    seekable: true,
   }
 }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { HistoryItem, LoopMode, MediaSourcePreference, PlayerState, QueueItem, SearchResult } from "@discord-music/contracts"
+  import type { HistoryItem, LoopMode, MediaSourcePreference, PlaybackFailureNotification, PlayerState, QueueItem, SearchResult } from "@discord-music/contracts"
   import { onMount, tick } from "svelte"
   import { base } from "$app/paths"
   import List from "phosphor-svelte/lib/List"
@@ -8,6 +8,7 @@
   import X from "phosphor-svelte/lib/X"
   import HistoryPanel from "$lib/components/HistoryPanel.svelte"
   import NowPlaying from "$lib/components/NowPlaying.svelte"
+  import PlaybackFailureToast from "$lib/components/PlaybackFailureToast.svelte"
   import QueuePanel from "$lib/components/QueuePanel.svelte"
   import ProviderSettings from "$lib/components/ProviderSettings.svelte"
   import RoomNav from "$lib/components/RoomNav.svelte"
@@ -42,6 +43,7 @@
   let searchError = $state<string | null>(null)
   let queueError = $state<string | null>(null)
   let providerError = $state<string | null>(null)
+  let playbackFailure = $state<PlaybackFailureNotification | null>(null)
   let pendingId = $state<string | null>(null)
   let queueOpen = $state(false)
   let observedAt = $state(Date.now())
@@ -53,7 +55,7 @@
   const applyState = (next: PlayerState): void => { snapshot = next; observedAt = Date.now(); displayPosition = next.player.positionMs; error = null }
   const refresh = async (): Promise<void> => { applyState(await api.state()) }
   const explain = (caught: unknown): string => caught instanceof DashboardApiError ? caught.message : caught instanceof Error ? caught.message : "The request failed. Try again."
-  const beginSocket = (): void => { if (session === null) return; disconnect?.(); disconnect = connectSnapshotSocket({ url: wsUrl, token: session.token, onState: applyState, onStatus: (status) => { socketStatus = status }, refresh }) }
+  const beginSocket = (): void => { if (session === null) return; disconnect?.(); disconnect = connectSnapshotSocket({ url: wsUrl, token: session.token, onState: applyState, onFailure: (failure) => { playbackFailure = failure }, onStatus: (status) => { socketStatus = status }, refresh }) }
   const containQueueFocus = (event: KeyboardEvent): void => {
     if (event.key === "Escape" && queueOpen) { queueOpen = false; return }
     if (event.key !== "Tab" || !queueOpen || typeof document === "undefined") return
@@ -190,6 +192,7 @@
   <aside class:open={queueOpen}><button class="close" aria-label="Close queue" onclick={() => queueOpen=false}><X size={22} aria-hidden="true" /></button><QueuePanel queue={snapshot.player.queue} {pendingId} error={queueError} action={(name,item,index) => void queueAction(name,item,index)} reorder={(item,index) => void reorderQueue(item,index)} /></aside>
   <footer class="mobile-footer"><button onclick={() => queueOpen=true}><List size={22} aria-hidden="true" />Queue ({snapshot.player.queue.length})</button><Badge status={snapshot.voice.connected ? "connected" : "degraded"} label={snapshot.voice.connected ? "Voice connected" : "Voice not joined"} /></footer>
 </div>{/if}
+<PlaybackFailureToast failure={playbackFailure} dismiss={() => playbackFailure = null} />
 {#if session !== null && snapshot !== null && snapshot.player.currentItem !== null}
   <footer class="desktop-player-footer">
     <div class="footer-track">{#if snapshot.player.currentItem.track.artworkUrl}<Artwork src={snapshot.player.currentItem.track.artworkUrl} alt="" />{/if}<strong>{snapshot.player.currentItem.track.title}</strong><span>{snapshot.player.currentItem.track.artist}</span></div>
