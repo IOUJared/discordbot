@@ -24,7 +24,7 @@ const track = TrackSchema.parse({
   provider: "youtube",
   title: "Example",
   artist: "Artist",
-  url: "https://example.com/watch",
+  url: "https://www.youtube.com/watch?v=track",
   durationMs: 120_000,
 })
 const item = QueueItemSchema.parse({
@@ -166,6 +166,7 @@ async function fixture(): Promise<{ readonly app: FastifyInstance; readonly play
       databasePath: ":memory:",
       host: "127.0.0.1",
       port: 0,
+      voiceIdleTimeoutMs: 300_000,
       logLevel: "silent",
       discordApiUrl: "https://discord.com/api/v10",
     },

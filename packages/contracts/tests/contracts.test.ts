@@ -5,6 +5,7 @@ import {
   MediaSourcePreferenceSchema,
   PlayerSnapshotSchema,
   SetVolumeRequestSchema,
+  TrackSchema,
   WebSocketMessageSchema,
 } from "../src/index.js"
 
@@ -13,7 +14,7 @@ const track = {
   provider: "youtube",
   title: "A deterministic track",
   artist: "Artist",
-  url: "https://example.test/watch/abc123",
+  url: "https://www.youtube.com/watch?v=abc123",
   durationMs: 180_000,
   artworkUrl: "https://example.test/art/abc123.png",
 }
@@ -33,6 +34,38 @@ const secondQueueItem = {
 }
 
 describe("contracts", () => {
+  it("rejects a loopback URL presented as a YouTube track", () => {
+    // Given: an authenticated client-authored track targeting loopback.
+    const loopbackTrack = {
+      ...track,
+      url: "http://127.0.0.1:38917/test.wav",
+    }
+
+    // When: the track crosses the shared API contract boundary.
+    const result = TrackSchema.safeParse(loopbackTrack)
+
+    // Then: the URL cannot become playback authority.
+    expect(result.success).toBe(false)
+  })
+
+  it.each([
+    ["spotify", "https://open.spotify.com/track/abc"],
+    ["url", "https://www.youtube.com/watch?v=abc123"],
+    ["youtube", "http://www.youtube.com/watch?v=abc123"],
+    ["youtube", "https://youtube.com/watch?v=abc123"],
+    ["youtube", "https://www.youtube.com:443/watch?v=abc123"],
+    ["youtube", "https://user@www.youtube.com/watch?v=abc123"],
+  ])("rejects unsupported provider or noncanonical URL: %s %s", (provider, url) => {
+    // Given: a track outside the implemented provider URL contract.
+    const candidate = { ...track, provider, url }
+
+    // When: the candidate crosses the track boundary.
+    const result = TrackSchema.safeParse(candidate)
+
+    // Then: only server-generated canonical provider tracks are accepted.
+    expect(result.success).toBe(false)
+  })
+
   it("parses and serializes a valid player snapshot", () => {
     // Given: a complete player snapshot received over an API boundary.
     const snapshot = {

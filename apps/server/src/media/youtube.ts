@@ -6,8 +6,13 @@ import {
 } from "@discord-music/contracts"
 import { z } from "zod"
 
+import {
+  type RemoteMediaPolicy,
+  RemoteMediaUrlSchema,
+  remoteMediaPolicy,
+} from "./media-url-policy.js"
 import { nodeProcessExecutor } from "./process-executor.js"
-import type { MusicSource, PlayableMedia, ProcessExecutor } from "./types.js"
+import type { MusicSource, PlayableMedia, ProcessExecutor, RemotePlayableMedia } from "./types.js"
 
 const searchEntrySchema = z.object({
   id: z.string().min(1),
@@ -18,12 +23,26 @@ const searchEntrySchema = z.object({
   thumbnail: z.url().optional(),
 })
 const searchOutputSchema = z.object({ entries: z.array(searchEntrySchema) })
+const safeHttpHeadersSchema = z
+  .record(z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u), z.string().regex(/^[^\r\n]*$/u))
+  .refine((headers) =>
+    Object.keys(headers).every(
+      (name) =>
+        ![
+          "host",
+          "connection",
+          "content-length",
+          "proxy-authorization",
+          "transfer-encoding",
+        ].includes(name.toLocaleLowerCase()),
+    ),
+  )
 const resolvedOutputSchema = z.object({
-  url: z.url(),
-  http_headers: z.record(z.string(), z.string()).default({}),
+  url: RemoteMediaUrlSchema,
+  http_headers: safeHttpHeadersSchema.default({}),
   ext: z.string().min(1),
   acodec: z.string().min(1),
-  protocol: z.string().min(1),
+  protocol: z.enum(["http", "https"]),
 })
 const processTimeoutMs = 20_000
 
@@ -50,19 +69,23 @@ export function parseSearchOutput(output: string): readonly SearchResult[] {
   })
 }
 
-export function parseResolvedOutput(output: string): PlayableMedia {
+export function parseResolvedOutput(output: string): RemotePlayableMedia {
   const parsed = resolvedOutputSchema.parse(JSON.parse(output))
   return {
+    kind: "remote",
     url: parsed.url,
     headers: parsed.http_headers,
     container: parsed.ext,
     codec: parsed.acodec,
-    seekable: parsed.protocol === "https" || parsed.protocol === "http",
+    seekable: true,
   }
 }
 
 export class YouTubeMusicSource implements MusicSource {
-  constructor(private readonly executor: ProcessExecutor = nodeProcessExecutor) {}
+  constructor(
+    private readonly executor: ProcessExecutor = nodeProcessExecutor,
+    private readonly policy: RemoteMediaPolicy = remoteMediaPolicy,
+  ) {}
 
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
     const request = {
@@ -76,13 +99,26 @@ export class YouTubeMusicSource implements MusicSource {
   }
 
   async resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
+    const parsedTrack = TrackSchema.parse(track)
+    if (parsedTrack.provider !== "youtube") {
+      throw new RangeError("Track is not a YouTube track")
+    }
     const request = {
       file: "yt-dlp",
-      args: ["--dump-single-json", "--no-playlist", "--no-warnings", "-f", "bestaudio", track.url],
+      args: [
+        "--dump-single-json",
+        "--no-playlist",
+        "--no-warnings",
+        "-f",
+        "bestaudio",
+        parsedTrack.url,
+      ],
       timeoutMs: processTimeoutMs,
       ...(signal === undefined ? {} : { signal }),
     }
     const result = await this.executor.run(request)
-    return parseResolvedOutput(result.stdout)
+    const media = parseResolvedOutput(result.stdout)
+    await this.policy.authorize(media.url)
+    return media
   }
 }

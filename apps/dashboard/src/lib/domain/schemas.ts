@@ -19,7 +19,7 @@ export const SessionSchema = z.strictObject({
 
 export const TrackSchema = z.strictObject({
   id: trackId,
-  provider: z.enum(["youtube", "spotify", "soundcloud", "url", "mock_tidal"]),
+  provider: z.enum(["youtube", "mock_tidal"]),
   title: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   artist: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   url: z.url(),

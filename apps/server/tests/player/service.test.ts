@@ -27,6 +27,7 @@ const guildId = GuildIdSchema.parse("guild-1")
 const channelId = ChannelIdSchema.parse("voice-1")
 const userId = UserIdSchema.parse("owner")
 const playable: PlayableMedia = {
+  kind: "local",
   url: "https://media.example/audio?token=redacted",
   headers: {},
   container: "webm",
@@ -44,15 +45,13 @@ function track(index: number): Track {
   }
 }
 const trackOne = track(1)
-const trackTwo = track(2)
-const tracks = [trackOne, trackTwo, track(3)]
 
 class FakeSource implements MusicSource {
   resolveCount = 0
   failTrackId: string | null = null
 
   async search() {
-    return tracks.map((track) => ({ track, score: 1 }))
+    return [trackOne, track(2), track(3)].map((track) => ({ track, score: 1 }))
   }
 
   async resolve(track: Track) {
@@ -123,15 +122,17 @@ class FakeVoice implements VoiceGateway {
 
 class FakeScheduler implements PlayerScheduler {
   callback: (() => void) | null = null
-  schedule(callback: () => void) {
+  delayMs: number | null = null
+  schedule(callback: () => void, delayMs: number) {
     this.callback = callback
+    this.delayMs = delayMs
     return () => {
       this.callback = null
     }
   }
 }
 
-function harness(settings?: SettingsPort) {
+function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
   const clock = new FixedClock(new Date("2026-01-01T00:00:00.000Z"))
   const source = new FakeSource()
   const providers = new FakeProviders()
@@ -153,6 +154,7 @@ function harness(settings?: SettingsPort) {
     resourceFactory: factory,
     clock,
     scheduler,
+    voiceIdleTimeoutMs,
     nextId: () => `generated-${sequence++}`,
     random: () => 0,
     ...(settings === undefined ? {} : { settings }),
@@ -248,7 +250,7 @@ describe("PlayerService", () => {
     const { service, source } = harness()
     source.failTrackId = "track-1"
     await service.enqueue(trackOne, userId)
-    await service.enqueue(trackTwo, userId)
+    await service.enqueue(track(2), userId)
 
     // When
     await service.startIfIdle()
@@ -284,6 +286,18 @@ describe("PlayerService", () => {
 
     // Then
     expect(voice.connected).toBe(false)
+  })
+
+  it("schedules idle disconnect with the configured exact delay", async () => {
+    // Given
+    const { scheduler, service } = harness(undefined, 42_000)
+    await service.join(channelId)
+
+    // When
+    service.stop()
+
+    // Then
+    expect(scheduler.delayMs).toBe(42_000)
   })
 
   it("clears the published voice channel after a terminal gateway disconnect", async () => {

@@ -1,9 +1,9 @@
-import { base } from "$app/paths"
 import {
+  type MediaProviderSettings,
   PlayerSnapshotSchema,
   QueueItemSchema,
-  type MediaProviderSettings,
 } from "@discord-music/contracts"
+import { base } from "$app/paths"
 
 const artworkUrl = new URL(`${base}/artwork-mountain.png`, location.origin).href
 
@@ -14,7 +14,7 @@ export const showcaseItem = QueueItemSchema.parse({
     provider: "youtube",
     title: "A very long track title that tests wrapping without breaking the control room",
     artist: "Midnight Relay",
-    url: "https://example.com/showcase",
+    url: "https://www.youtube.com/watch?v=showcase",
     durationMs: 220_000,
     artworkUrl,
   },

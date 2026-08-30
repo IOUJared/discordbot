@@ -33,4 +33,23 @@ describe("server configuration", () => {
   it("Given an invalid frontend URL When parsed Then configuration is rejected", () => {
     expect(() => parseConfig({ ...valid, FRONTEND_URL: "javascript:alert(1)" })).toThrow()
   })
+
+  it("Given no voice idle timeout When parsed Then five minutes is used", () => {
+    const config = parseConfig(valid)
+
+    expect(config.voiceIdleTimeoutMs).toBe(300_000)
+  })
+
+  it("Given a custom voice idle timeout When parsed Then seconds are converted to milliseconds", () => {
+    const config = parseConfig({ ...valid, VOICE_IDLE_TIMEOUT: "42" })
+
+    expect(config.voiceIdleTimeoutMs).toBe(42_000)
+  })
+
+  it.each(["0", "1.5", "86401", "not-a-number"])(
+    "Given invalid voice idle timeout %s When parsed Then configuration is rejected",
+    (voiceIdleTimeout) => {
+      expect(() => parseConfig({ ...valid, VOICE_IDLE_TIMEOUT: voiceIdleTimeout })).toThrow()
+    },
+  )
 })

@@ -1,20 +1,10 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { join, relative } from "node:path"
 import { describe, expect, it } from "vitest"
 
 const dashboardRoot = process.cwd()
 const outputRoot = join(dashboardRoot, "build")
-
-function artifactText(directory: string): string {
-  return readdirSync(directory)
-    .flatMap((entry) => {
-      const path = join(directory, entry)
-      if (statSync(path).isDirectory()) return artifactText(path)
-      return /\.(?:html|js|css)$/.test(entry) ? readFileSync(path, "utf8") : ""
-    })
-    .join("\n")
-}
 
 function buildWithBase(base: string): void {
   execFileSync("pnpm", ["build"], {
@@ -24,20 +14,49 @@ function buildWithBase(base: string): void {
   })
 }
 
+function deploymentPage(base: string, outputPath: string): URL {
+  const deploymentBase = base.length === 0 ? "/" : `${base}/`
+  return new URL(
+    `${deploymentBase}${outputPath.replace(/index\.html$/, "")}`,
+    "https://owner.github.io",
+  )
+}
+
+function generatedAssetUrls(html: string, page: URL): readonly URL[] {
+  return [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
+    .map((match) => match[1])
+    .filter((value): value is string => value !== undefined && !value.startsWith("data:"))
+    .map((value) => new URL(value, page))
+}
+
 describe("GitHub Pages static artifacts", () => {
-  it("Given root and repository base paths When production builds Then links and artwork resolve without SPA fallback", () => {
+  it("Given root and repository base paths When production builds Then page assets and artwork resolve from their deployed URLs", () => {
     for (const base of ["", "/discordbot"]) {
       buildWithBase(base)
-      const text = artifactText(outputRoot)
-      const rootHtml = readFileSync(join(outputRoot, "index.html"), "utf8")
-      expect(existsSync(join(outputRoot, "showcase", "index.html"))).toBe(true)
-      expect(existsSync(join(outputRoot, "design-system", "index.html"))).toBe(true)
-      expect(existsSync(join(outputRoot, "artwork-mountain.png"))).toBe(true)
-      expect(text.includes("/showcase/")).toBe(true)
-      expect(text.includes("/design-system/")).toBe(true)
-      expect(text.includes("/artwork-mountain.png")).toBe(true)
-      if (base.length > 0) expect(rootHtml.includes(`assets: "${base}"`)).toBe(true)
-      expect(text).not.toContain("http://127.0.0.1:4174/artwork-mountain.png")
+      const pages = ["index.html", "showcase/index.html", "design-system/index.html"]
+
+      for (const outputPath of pages) {
+        const pageFile = join(outputRoot, outputPath)
+        expect(existsSync(pageFile)).toBe(true)
+
+        for (const assetUrl of generatedAssetUrls(
+          readFileSync(pageFile, "utf8"),
+          deploymentPage(base, outputPath),
+        )) {
+          expect(assetUrl.pathname.startsWith(`${base}/`)).toBe(true)
+          expect(existsSync(join(outputRoot, relative(base || "/", assetUrl.pathname)))).toBe(true)
+        }
+      }
+
+      for (const artwork of [
+        "artwork-mountain.png",
+        "artwork-mountain-720.webp",
+        "artwork-mountain-720.avif",
+      ]) {
+        const artworkUrl = new URL(`${base}/${artwork}`, "https://owner.github.io")
+        expect(artworkUrl.pathname).toBe(`${base}/${artwork}`)
+        expect(existsSync(join(outputRoot, relative(base || "/", artworkUrl.pathname)))).toBe(true)
+      }
     }
   }, 60_000)
 })

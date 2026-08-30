@@ -1,8 +1,11 @@
+import { TrackSchema } from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
-
+import { createRemoteMediaPolicy } from "../../src/media/media-url-policy.js"
+import type { ProcessExecutor } from "../../src/media/types.js"
 import {
   parseResolvedOutput,
   parseSearchOutput,
+  YouTubeMusicSource,
   youtubeSearchArgs,
 } from "../../src/media/youtube.js"
 
@@ -56,7 +59,7 @@ describe("YouTube yt-dlp boundary", () => {
   it("parses playable URL headers and seek support", () => {
     // Given
     const output = JSON.stringify({
-      url: "https://media.example/audio?token=secret",
+      url: "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?token=secret",
       http_headers: { Authorization: "secret", "User-Agent": "agent" },
       ext: "webm",
       acodec: "opus",
@@ -68,11 +71,80 @@ describe("YouTube yt-dlp boundary", () => {
 
     // Then
     expect(media).toEqual({
-      url: "https://media.example/audio?token=secret",
+      kind: "remote",
+      url: "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?token=secret",
       headers: { Authorization: "secret", "User-Agent": "agent" },
       container: "webm",
       codec: "opus",
       seekable: true,
     })
+  })
+
+  it("rejects a resolved Host header override", () => {
+    // Given: yt-dlp output that tries to replace the validated URL authority.
+    const output = JSON.stringify({
+      url: "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+      http_headers: { Host: "127.0.0.1" },
+      ext: "webm",
+      acodec: "opus",
+      protocol: "https",
+    })
+
+    // When: the external JSON crosses the media boundary.
+    const parse = () => parseResolvedOutput(output)
+
+    // Then: the authority-changing header is rejected.
+    expect(parse).toThrow()
+  })
+
+  it("rejects a manifest protocol that could make FFmpeg fetch nested URLs", () => {
+    // Given: yt-dlp output representing a remote HLS manifest.
+    const output = JSON.stringify({
+      url: "https://rr1---sn-a5mekn7z.googlevideo.com/manifest.m3u8",
+      http_headers: {},
+      ext: "mp4",
+      acodec: "aac",
+      protocol: "m3u8_native",
+    })
+
+    // When: the external JSON crosses the media boundary.
+    const parse = () => parseResolvedOutput(output)
+
+    // Then: nested network authority cannot reach FFmpeg through stdin.
+    expect(parse).toThrow()
+  })
+
+  it("rejects a private DNS answer immediately after yt-dlp resolves media", async () => {
+    // Given: yt-dlp returns an allowed delivery host that resolves to loopback.
+    const executor: ProcessExecutor = {
+      async run() {
+        return {
+          stdout: JSON.stringify({
+            url: "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+            http_headers: {},
+            ext: "webm",
+            acodec: "opus",
+            protocol: "https",
+          }),
+          stderr: "",
+        }
+      },
+    }
+    const policy = createRemoteMediaPolicy(async () => [{ address: "127.0.0.1", family: 4 }])
+    const source = new YouTubeMusicSource(executor, policy)
+    const track = TrackSchema.parse({
+      id: "abc",
+      provider: "youtube",
+      title: "Song",
+      artist: "Artist",
+      url: "https://www.youtube.com/watch?v=abc",
+      durationMs: 42_000,
+    })
+
+    // When: the source resolves the track.
+    const resolve = source.resolve(track)
+
+    // Then: the media is rejected before it can reach playback.
+    await expect(resolve).rejects.toThrow()
   })
 })

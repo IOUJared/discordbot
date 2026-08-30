@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto"
+import { createHash } from "node:crypto"
 
 type StateEntry = { readonly verifier: string; readonly expiresAtMs: number }
 type ConsumeResult =
@@ -36,10 +36,4 @@ export class OAuthStateStore {
 
 function hash(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex")
-}
-
-export function statesMatch(received: string, expected: string): boolean {
-  const left = Buffer.from(received)
-  const right = Buffer.from(expected)
-  return left.length === right.length && timingSafeEqual(left, right)
 }

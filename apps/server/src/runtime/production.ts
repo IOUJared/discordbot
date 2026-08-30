@@ -72,6 +72,7 @@ export async function runProduction(
     resourceFactory: new DiscordAudioResourceFactory(),
     clock: systemClock,
     scheduler: systemScheduler,
+    voiceIdleTimeoutMs: config.voiceIdleTimeoutMs,
     nextId: secureRandom.token,
     random: Math.random,
     settings: persistence.settings,
@@ -109,6 +110,7 @@ export async function runProduction(
       authorizedUserIds,
       service: new PlayerCommandService(player),
     }),
+    (failure) => app.log.error(failure, failure.event),
   )
   wireDiscordPresence(client, player, (error) => app.log.warn({ err: error }, "presence.failed"))
 

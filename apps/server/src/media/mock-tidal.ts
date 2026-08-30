@@ -20,7 +20,14 @@ export class MockTidalMusicSource implements MusicSource {
     }
     const path = await this.wavStore.get(entry.slug, entry.durationSeconds, entry.frequencyHz)
     signal?.throwIfAborted()
-    return { url: path, headers: {}, container: "wav", codec: "pcm_s16le", seekable: true }
+    return {
+      kind: "local",
+      url: path,
+      headers: {},
+      container: "wav",
+      codec: "pcm_s16le",
+      seekable: true,
+    }
   }
 
   close(): Promise<void> {

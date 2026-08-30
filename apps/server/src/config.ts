@@ -17,6 +17,7 @@ const envSchema = z.object({
   DATABASE_PATH: z.string().min(1),
   HOST: z.string().min(1).default("127.0.0.1"),
   PORT: z.coerce.number().int().min(0).max(65_535).default(3000),
+  VOICE_IDLE_TIMEOUT: z.coerce.number().int().min(1).max(86_400).default(300),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   DISCORD_API_URL: httpUrl.default("https://discord.com/api/v10"),
 })
@@ -34,6 +35,7 @@ export type ServerConfig = {
   readonly databasePath: string
   readonly host: string
   readonly port: number
+  readonly voiceIdleTimeoutMs: number
   readonly logLevel: string
   readonly discordApiUrl: string
 }
@@ -60,6 +62,7 @@ export function parseConfig(input: Readonly<Record<string, string | undefined>>)
     databasePath: parsed.DATABASE_PATH,
     host: parsed.HOST,
     port: parsed.PORT,
+    voiceIdleTimeoutMs: parsed.VOICE_IDLE_TIMEOUT * 1_000,
     logLevel: parsed.LOG_LEVEL,
     discordApiUrl: parsed.DISCORD_API_URL.replace(/\/$/, ""),
   }

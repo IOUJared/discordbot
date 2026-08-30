@@ -18,9 +18,16 @@ import {
   COMMAND_DEFINITIONS,
   COMMAND_NAMES,
   type CommandContext,
+  type CommandRouter,
   createCommandRouter,
 } from "../../src/discord/commands.js"
-import { handleInteraction, type InteractionCommandPort } from "../../src/discord/interaction.js"
+import {
+  handleIncomingInteraction,
+  handleInteraction,
+  handleInteractionBoundary,
+  type InteractionCommandPort,
+  type InteractionFailure,
+} from "../../src/discord/interaction.js"
 
 const guildId = GuildIdSchema.parse("guild-1")
 const ownerId = UserIdSchema.parse("owner")
@@ -287,11 +294,15 @@ describe("Discord command router", () => {
       guildId: "guild-1",
       userId: "owner",
       voiceChannelId: "voice-1",
+      replied: false,
+      deferred: false,
       getString: (name) => (name === "query" ? "injection; $(id)" : null),
       getInteger: () => null,
       reply: async (payload) => {
         replies.push(payload)
       },
+      followUp: async () => {},
+      editReply: async () => {},
     }
     const calls: CommandContext[] = []
     const router = createCommandRouter({
@@ -312,4 +323,166 @@ describe("Discord command router", () => {
     expect(calls.at(0)?.options).toEqual({ query: "injection; $(id)" })
     expect(replies.at(0)).toMatchObject({ embeds: [{ data: { description: "Queued" } }] })
   })
+
+  it("contains a routed command rejection, reports a redacted failure, and acknowledges once", async () => {
+    // Given
+    const replies: unknown[] = []
+    const failures: InteractionFailure[] = []
+    const port = interactionPort({
+      reply: async (payload) => {
+        replies.push(payload)
+      },
+    })
+    const router: CommandRouter = {
+      handle: async () => {
+        throw new Error("private routed-command detail")
+      },
+    }
+
+    // When
+    await handleInteractionBoundary(port, router, (failure) => failures.push(failure))
+
+    // Then
+    expect(failures).toEqual([
+      {
+        event: "discord.interaction.failed",
+        phase: "handling",
+        error: { type: "error", message: "[Redacted]" },
+      },
+    ])
+    expect(replies).toEqual([
+      { content: "Something went wrong while processing that command.", ephemeral: true },
+    ])
+  })
+
+  it("contains a failure while sending the initial reply", async () => {
+    // Given
+    const failures: InteractionFailure[] = []
+    const port = interactionPort({
+      reply: async () => {
+        throw new Error("reply transport failed")
+      },
+    })
+    const router: CommandRouter = { handle: async () => ({ kind: "ok", message: "Queued" }) }
+
+    // When
+    await handleInteractionBoundary(port, router, (failure) => failures.push(failure))
+
+    // Then
+    expect(failures).toEqual([
+      {
+        event: "discord.interaction.failed",
+        phase: "handling",
+        error: { type: "error", message: "[Redacted]" },
+      },
+      {
+        event: "discord.interaction.failed",
+        phase: "responding",
+        error: { type: "error", message: "[Redacted]" },
+      },
+    ])
+  })
+
+  it("uses a follow-up without double-replying when the interaction was already replied to", async () => {
+    // Given
+    const replies: unknown[] = []
+    const followUps: unknown[] = []
+    const port = interactionPort({
+      replied: true,
+      reply: async (payload) => {
+        replies.push(payload)
+      },
+      followUp: async (payload) => {
+        followUps.push(payload)
+      },
+    })
+    const router: CommandRouter = { handle: async () => Promise.reject(new Error("failed")) }
+
+    // When
+    await handleInteractionBoundary(port, router, () => {})
+
+    // Then
+    expect(replies).toEqual([])
+    expect(followUps).toEqual([
+      { content: "Something went wrong while processing that command.", ephemeral: true },
+    ])
+  })
+
+  it("edits a deferred response without double-replying", async () => {
+    // Given
+    const replies: unknown[] = []
+    const edits: unknown[] = []
+    const port = interactionPort({
+      deferred: true,
+      reply: async (payload) => {
+        replies.push(payload)
+      },
+      editReply: async (payload) => {
+        edits.push(payload)
+      },
+    })
+    const router: CommandRouter = { handle: async () => Promise.reject(new Error("failed")) }
+
+    // When
+    await handleInteractionBoundary(port, router, () => {})
+
+    // Then
+    expect(replies).toEqual([])
+    expect(edits).toEqual([{ content: "Something went wrong while processing that command." }])
+  })
+
+  it("does not route non-chat interactions", async () => {
+    // Given
+    let calls = 0
+    const router: CommandRouter = {
+      handle: async () => {
+        calls += 1
+        return { kind: "ok", message: "should not be returned" }
+      },
+    }
+
+    // When
+    await handleIncomingInteraction({ kind: "non-chat-input" }, router, () => {})
+
+    // Then
+    expect(calls).toBe(0)
+  })
+
+  it("contains reporter failures while still acknowledging the command failure", async () => {
+    // Given
+    const replies: unknown[] = []
+    const port = interactionPort({
+      reply: async (payload) => {
+        replies.push(payload)
+      },
+    })
+    const router: CommandRouter = { handle: async () => Promise.reject(new Error("failed")) }
+
+    // When
+    await handleInteractionBoundary(port, router, () => {
+      throw new Error("logger transport failed")
+    })
+
+    // Then
+    expect(replies).toEqual([
+      { content: "Something went wrong while processing that command.", ephemeral: true },
+    ])
+  })
 })
+
+function interactionPort(overrides: Partial<InteractionCommandPort> = {}): InteractionCommandPort {
+  return {
+    commandName: "pause",
+    guildId: "guild-1",
+    userId: "owner",
+    voiceChannelId: "voice-1",
+    replied: false,
+    deferred: false,
+    getString: () => null,
+    getInteger: () => null,
+    reply: async () => {},
+    followUp: async () => {},
+    editReply: async () => {},
+    ...overrides,
+  }
+}

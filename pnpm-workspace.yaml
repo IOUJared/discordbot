@@ -4,7 +4,7 @@ packages:
 overrides:
   ws: 8.21.3
 allowBuilds:
-  '@discordjs/opus': set this to true or false
+  '@discordjs/opus': false
   better-sqlite3: true
   esbuild: true
 minimumReleaseAgeExclude:

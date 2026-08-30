@@ -11,6 +11,25 @@ volume, loop mode, playback-source preference, mock-provider connection state, a
 history items persist. A restart intentionally clears the
 current track, queue, and voice connection.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  Discord[Discord users and voice] <--> Server[Bot + Fastify API]
+  Dashboard[GitHub Pages dashboard] <-->|HTTPS / WebSocket| Server
+  Server <--> SQLite[(SQLite settings and history)]
+  Server --> Media[Mock TIDAL fixtures or yt-dlp + FFmpeg]
+```
+
+- **Bot and player:** accepts authorized slash commands, maintains one guild queue, and owns the
+  Discord voice connection.
+- **Fastify API:** performs Discord OAuth, authenticates browser commands, and publishes player
+  snapshots over WebSocket.
+- **Dashboard:** is a static SvelteKit client; it holds only a short-lived browser session and
+  never receives Discord secrets.
+- **SQLite and media adapters:** persist settings/history while keeping source selection and local
+  Mock TIDAL fixtures separate from YouTube extraction.
+
 ## Requirements
 
 - Node.js 24 LTS and pnpm 11.3 or newer
@@ -74,6 +93,7 @@ definitions.
 | `HOST` | Listener address; defaults to `127.0.0.1` |
 | `PORT` | Listener port; defaults to `3000` |
 | `LOG_LEVEL` | Pino level; defaults to `info` |
+| `VOICE_IDLE_TIMEOUT` | Seconds without queued music before leaving voice; defaults to `300` |
 | `DISCORD_API_URL` | Optional Discord API override; defaults to API v10 |
 
 Real `.env` files are ignored. Browser builds receive only `VITE_API_URL`; no bot token, OAuth
@@ -85,12 +105,13 @@ tokens are stored in `sessionStorage`, expire after eight hours, and are revoked
 ```sh
 pnpm install --frozen-lockfile
 cp .env.example .env
-pnpm build
 set -a; . ./.env; set +a
-pnpm start
+pnpm dev
 ```
 
-The health endpoint is public and intentionally limited:
+`pnpm dev` is the bot development command: it builds workspace contracts and the server, then
+watches the compiled server entry. Use `pnpm dev:bot` explicitly for the same behavior. The health
+endpoint is public and intentionally limited:
 
 ```sh
 curl http://127.0.0.1:3000/health
@@ -99,7 +120,7 @@ curl http://127.0.0.1:3000/health
 For the dashboard, use another terminal:
 
 ```sh
-VITE_API_URL=http://127.0.0.1:3000 pnpm --filter @discord-music/dashboard dev
+VITE_API_URL=http://127.0.0.1:3000 pnpm dev:dashboard
 ```
 
 Set `FRONTEND_URL` to the exact Vite origin. The API checks CORS and WebSocket `Origin`; a mismatch
@@ -120,6 +141,18 @@ pnpm --filter @discord-music/dashboard test:e2e
 
 CI runs the first five commands on Node 24 with a frozen lockfile. Live Discord and YouTube are
 not required in CI.
+
+## Updating
+
+1. Stop the deployed service and take a SQLite-aware backup (or copy the database while stopped).
+2. Review release notes, then update the checkout and run `pnpm install --frozen-lockfile`; use
+   `pnpm update` only for deliberate, reviewed dependency upgrades and commit the regenerated lockfile.
+3. Update `yt-dlp` independently (`yt-dlp -U`) or rebuild the image with `docker compose build --pull`.
+   Verify `yt-dlp --version` as the service user before restart.
+4. For schema changes, add a forward-only migration, test it against a copy of a current database,
+   and keep the backup until the service has started successfully. Never edit applied migration SQL.
+5. Run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Then restart
+   with `sudo systemctl restart discord-music` or `docker compose up -d` and check `/health`.
 
 ## Docker Compose
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { TrackSchema } from "../src/lib/domain/schemas.js"
 import {
   controlsFor,
   parseSnapshotMessage,
@@ -20,6 +21,19 @@ describe("state derivation", () => {
   it("Given malformed websocket input When parsed Then it is rejected", () => {
     expect(
       parseSnapshotMessage({ version: 1, type: "state.snapshot", payload: { bad: true } }).success,
+    ).toBe(false)
+  })
+
+  it("Given a provider unsupported by the shared player contract When a track is parsed Then it is rejected", () => {
+    expect(
+      TrackSchema.safeParse({
+        id: "spotify-track",
+        provider: "spotify",
+        title: "Unsupported provider",
+        artist: "Fixture",
+        url: "https://example.com/track",
+        durationMs: 1_000,
+      }).success,
     ).toBe(false)
   })
 })

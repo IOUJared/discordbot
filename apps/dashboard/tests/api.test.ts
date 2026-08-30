@@ -28,7 +28,7 @@ const track = TrackSchema.parse({
   provider: "youtube",
   title: "Track",
   artist: "Artist",
-  url: "https://example.com/track-1",
+  url: "https://www.youtube.com/watch?v=track-1",
   durationMs: 240_000,
 })
 

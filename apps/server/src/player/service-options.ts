@@ -18,6 +18,7 @@ export type PlayerServiceOptions = {
   readonly resourceFactory: AudioResourceFactory
   readonly clock: Clock
   readonly scheduler: PlayerScheduler
+  readonly voiceIdleTimeoutMs: number
   readonly nextId: () => string
   readonly random: () => number
   readonly settings?: SettingsPort

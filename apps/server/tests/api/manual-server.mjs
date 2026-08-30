@@ -10,6 +10,8 @@ let volume = 100
 let paused = false
 let revoked = false
 let exchangeAvailable = true
+let sourcePreference = "youtube_only"
+let mockTidalConnected = false
 const queue = []
 
 function publish() {
@@ -98,6 +100,21 @@ const player = {
     connected = false
     publish()
   },
+  providerSettings: () => ({ preference: sourcePreference, mockTidalConnected }),
+  setSourcePreference: (preference) => {
+    sourcePreference = preference
+    publish()
+  },
+  connectMockTidal: () => {
+    sourcePreference = "mock_tidal_first"
+    mockTidalConnected = true
+    publish()
+  },
+  disconnectMockTidal: () => {
+    sourcePreference = "youtube_only"
+    mockTidalConnected = false
+    publish()
+  },
 }
 
 const app = await buildApp({
@@ -114,6 +131,7 @@ const app = await buildApp({
     databasePath: ":memory:",
     host: "127.0.0.1",
     port: 0,
+    voiceIdleTimeoutMs: 300_000,
     logLevel: "silent",
     discordApiUrl: "http://127.0.0.1:1",
   },
@@ -149,7 +167,7 @@ const app = await buildApp({
           provider: "youtube",
           title: "Search Result",
           artist: "Artist",
-          url: "https://example.com/search",
+          url: "https://www.youtube.com/watch?v=manualfixture",
           durationMs: 60_000,
         },
         score: 1,

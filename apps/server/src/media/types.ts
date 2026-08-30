@@ -4,14 +4,21 @@ import type {
   SearchResult,
   Track,
 } from "@discord-music/contracts"
+import type { RemoteMediaUrl } from "./media-url-policy.js"
 
-export type PlayableMedia = {
-  readonly url: string
+type MediaMetadata = {
   readonly headers: Readonly<Record<string, string>>
   readonly container: string
   readonly codec: string
   readonly seekable: boolean
 }
+
+export type LocalPlayableMedia = MediaMetadata & { readonly kind: "local"; readonly url: string }
+export type RemotePlayableMedia = MediaMetadata & {
+  readonly kind: "remote"
+  readonly url: RemoteMediaUrl
+}
+export type PlayableMedia = LocalPlayableMedia | RemotePlayableMedia
 
 export interface MusicSource {
   search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]>

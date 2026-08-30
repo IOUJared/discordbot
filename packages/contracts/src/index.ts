@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const TRACK_PROVIDERS = ["youtube", "spotify", "soundcloud", "url", "mock_tidal"] as const
+export const TRACK_PROVIDERS = ["youtube", "mock_tidal"] as const
 export const LOOP_MODES = ["off", "track", "queue"] as const
 export const MEDIA_SOURCE_PREFERENCES = ["mock_tidal_first", "youtube_only"] as const
 export const HISTORY_END_REASONS = ["finished", "skipped", "stopped", "errored"] as const
@@ -40,17 +40,37 @@ export type LoopMode = z.infer<typeof LoopModeSchema>
 export type MediaSourcePreference = z.infer<typeof MediaSourcePreferenceSchema>
 export type HistoryEndReason = z.infer<typeof HistoryEndReasonSchema>
 
-export const TrackSchema = z
-  .object({
-    id: TrackIdSchema,
-    provider: TrackProviderSchema,
-    title: z.string().trim().min(1).max(512),
-    artist: z.string().trim().min(1).max(512),
-    url: z.string().url(),
-    durationMs: DurationMsSchema,
-    artworkUrl: z.string().url().optional(),
-  })
-  .strict()
+const canonicalYouTubeUrl = z
+  .url()
+  .regex(/^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{1,128}$/u)
+const mockTidalUrl = z
+  .url()
+  .regex(/^https:\/\/mock\.tidal\.invalid\/tracks\/[a-z0-9]+(?:-[a-z0-9]+)*$/u)
+
+export const TrackSchema = z.discriminatedUnion("provider", [
+  z
+    .object({
+      id: TrackIdSchema,
+      provider: z.literal("youtube"),
+      title: z.string().trim().min(1).max(512),
+      artist: z.string().trim().min(1).max(512),
+      url: canonicalYouTubeUrl,
+      durationMs: DurationMsSchema,
+      artworkUrl: z.string().url().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      id: TrackIdSchema,
+      provider: z.literal("mock_tidal"),
+      title: z.string().trim().min(1).max(512),
+      artist: z.string().trim().min(1).max(512),
+      url: mockTidalUrl,
+      durationMs: DurationMsSchema,
+      artworkUrl: z.string().url().optional(),
+    })
+    .strict(),
+])
 
 export type Track = Readonly<z.infer<typeof TrackSchema>>
 

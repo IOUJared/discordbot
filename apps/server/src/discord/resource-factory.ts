@@ -23,11 +23,22 @@ export class DiscordVoiceResource implements PlayerAudioResource {
 export function ffmpegArgs(media: PlayableMedia, offsetMs: number): readonly string[] {
   const args = ["-nostdin", "-hide_banner", "-loglevel", "error"]
   if (offsetMs > 0) args.push("-ss", (offsetMs / 1_000).toFixed(3))
-  const headerLines = Object.entries(media.headers).map(([name, value]) => `${name}: ${value}`)
-  if (headerLines.length > 0) args.push("-headers", `${headerLines.join("\r\n")}\r\n`)
+  let input: string
+  switch (media.kind) {
+    case "local":
+      input = media.url
+      break
+    case "remote":
+      input = "pipe:0"
+      break
+    default: {
+      const unreachable: never = media
+      throw new TypeError(`Unsupported media kind: ${String(unreachable)}`)
+    }
+  }
   args.push(
     "-i",
-    media.url,
+    input,
     "-vn",
     "-ac",
     "2",
@@ -48,9 +59,9 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
     offsetMs: number,
     signal?: AbortSignal,
   ): Promise<PlayerAudioResource> {
-    if (media.container === "webm" && media.codec === "opus") {
+    if (media.kind === "remote" && media.container === "webm" && media.codec === "opus") {
       try {
-        const stream = await openDirectStream(media, signal)
+        const stream = await openDirectStream(media, signal === undefined ? {} : { signal })
         const probe = await demuxProbe(stream)
         return new DiscordVoiceResource(
           createAudioResource(probe.stream, { inputType: probe.type, inlineVolume: true }),
@@ -60,10 +71,16 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
         if (!(error instanceof Error)) throw error
       }
     }
+    const remoteStream =
+      media.kind === "remote"
+        ? await openDirectStream(media, signal === undefined ? {} : { signal })
+        : undefined
     const child = spawn("ffmpeg", [...ffmpegArgs(media, offsetMs)], {
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     })
+    if (remoteStream === undefined) child.stdin.end()
+    else remoteStream.pipe(child.stdin)
     const abort = () => child.kill("SIGKILL")
     signal?.addEventListener("abort", abort, { once: true })
     const removeAbortListener = () => signal?.removeEventListener("abort", abort)
@@ -72,6 +89,7 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
       createAudioResource(child.stdout, { inputType: StreamType.OggOpus, inlineVolume: true }),
       () => {
         removeAbortListener()
+        remoteStream?.destroy()
         if (child.exitCode === null) child.kill("SIGKILL")
       },
     )

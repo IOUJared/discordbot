@@ -53,7 +53,7 @@ export function historyItem(index: number): HistoryItem {
         provider: "youtube",
         title: `Track ${index}`,
         artist: "Artist",
-        url: `https://example.com/tracks/${index}`,
+        url: `https://www.youtube.com/watch?v=track-${index}`,
         durationMs: DurationMsSchema.parse(180_000),
       },
       requestedBy: USER_ID,
