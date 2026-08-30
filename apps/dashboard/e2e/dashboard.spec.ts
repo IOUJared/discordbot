@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { mockWire, room, track } from "./wire.js"
+import { emptyRoom, mockWire, room, track } from "./wire.js"
 
 test("Given the signed-out page When Discord sign-in is clicked Then GET OAuth navigation uses the approved route", async ({
   page,
@@ -13,6 +13,28 @@ test("Given the signed-out page When Discord sign-in is clicked Then GET OAuth n
   await page.getByRole("link", { name: "Sign in with Discord" }).click()
   await expect(page).toHaveURL("http://127.0.0.1:3000/auth/discord")
   expect(method).toBe("GET")
+})
+
+test("Given disconnected desktop voice When no channel is selected Then the channel picker remains usable", async ({
+  page,
+}) => {
+  // Given: an authenticated desktop listener who has not joined voice.
+  await mockWire(page, { state: emptyRoom })
+  await page.goto("/#code=one-time")
+
+  // When: the voice controls render without a selected channel.
+  const channelPicker = page.getByRole("combobox", { name: "Voice channel" }).first()
+  const channelPickerField = channelPicker.locator("xpath=..")
+
+  // Then: the picker is visible and choosing a channel enables Join voice.
+  await expect(channelPicker).toBeVisible()
+  const pickerBox = await channelPickerField.boundingBox()
+  expect(pickerBox?.width).toBeGreaterThanOrEqual(160)
+  await expect(page.getByRole("button", { name: "Join voice" }).first()).toBeDisabled()
+  await channelPicker.selectOption("voice-1")
+  await expect(page.getByRole("button", { name: "Join voice" }).first()).toBeEnabled()
+  const selectedPickerBox = await channelPickerField.boundingBox()
+  expect(selectedPickerBox?.y).toBeGreaterThanOrEqual(0)
 })
 
 test("Given a desktop queue When an item is pointer-dragged Then its unique ID is reordered optimistically", async ({
