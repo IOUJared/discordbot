@@ -538,6 +538,34 @@ for (const width of [375, 768, 1280]) {
   })
 }
 
+test("Given an ultrawide desktop When the room loads Then the workspace fills the monitor", async ({
+  page,
+}) => {
+  // Given
+  await page.setViewportSize({ width: 2560, height: 1440 })
+  await mockWire(page)
+
+  // When
+  await page.goto("/#code=ultrawide-room")
+
+  // Then
+  const geometry = await page.locator(".shell").evaluate((shell) => {
+    const main = shell.querySelector("main")?.getBoundingClientRect()
+    const queue = shell.querySelector("aside")?.getBoundingClientRect()
+    const now = shell.querySelector(".now")?.getBoundingClientRect()
+    const search = shell.querySelector(".search")?.getBoundingClientRect()
+    return {
+      workspaceMeetsQueue: main?.right === queue?.left,
+      searchBesidePlayer: (search?.left ?? 0) >= (now?.right ?? Number.POSITIVE_INFINITY),
+    }
+  })
+  expect(geometry).toEqual({ workspaceMeetsQueue: true, searchBesidePlayer: true })
+  await page.screenshot({
+    path: "../../.omo/evidence/dashboard/product-2560.png",
+    fullPage: true,
+  })
+})
+
 test("Given the desktop reference geometry When the room loads Then comparison evidence is captured", async ({
   page,
 }) => {

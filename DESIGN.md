@@ -97,6 +97,7 @@ All spatial values derive from **4px**.
 | Layout state | Width | Frame | Fixed / persistent regions | Vertical scroll owner |
 |---|---:|---|---|---|
 | Desktop | `>= 1024px` | `100dvh` three-plane grid. At the selected reference's exact 1568×1003 viewport: 337px room rail / 670px player / 561px queue above a 156px player footer. Below that reference size the outer planes and footer scale fluidly toward 216px / 320px / 80px minima. | Room rail, player footer, queue heading | Main player body owns its own scroll; queue body owns its own scroll; room rail scrolls only if its own navigation overflows. The document never scrolls. |
+| Wide desktop | `>= 1800px` | The three planes continue edge-to-edge. The center plane becomes a two-column control workspace with now-playing on the left and search on the right; the global page limiter must never constrain a shell grid track. | Room rail, voice toolbar, player footer, queue heading | Now-playing and search own independent bounded overflow only when their content exceeds the viewport. No unused gutter may appear between the center plane and queue. |
 | Tablet | `768–1023px` | `100dvh` grid: 64px icon rail / `minmax(0,1fr)` player; 72px footer | Icon rail, header, player footer; queue opens as a modal drawer | Main player body is the sole shell scroll owner. Drawer has a separately named queue-list scroll body and locks background scroll. |
 | Mobile | `< 768px` | `100dvh` grid: 56px header / `minmax(0,1fr)` content / 72px control footer | Header and 72px control footer; room switcher is header action | Main content is the sole vertical scroll owner. Queue opens as bottom sheet; only its list body scrolls and background is locked. No nested carousel/list scrollbar. |
 
@@ -104,6 +105,7 @@ Implementation geometry uses named aliases so responsive CSS never repeats one-o
 
 - Use logical properties, dynamic viewport units, and `min-block-size: 0` on every scroll child. No `100vh` shell and no unbounded flex/grid child.
 - Desktop content has 24px gutters and `max-inline-size: 1440px`; tablet has 20px gutters; mobile has 16px gutters. The desktop center column uses a content-limiter of 720px for now-playing metadata and transport.
+- On wide desktop, the 720px content limiter remains local to readable controls; it does not cap the center plane. Search becomes the adjacent secondary work surface rather than leaving unused canvas around the player.
 - Main queue tracks use an overflow-safe intrinsic grid only for artwork collections: `repeat(auto-fit, minmax(min(12rem, 100%), 1fr))`. The queue itself remains a single readable list.
 - At 200% zoom, desktop adopts tablet behavior before controls collide; at 375px, every primary action remains in one readable column without horizontal primary-content scroll.
 

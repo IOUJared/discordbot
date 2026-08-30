@@ -1,7 +1,7 @@
 .skip{position:fixed;inset-block-start:var(--space-2);inset-inline-start:var(--space-2);z-index:10;padding:var(--space-2);background:var(--focus-ring);color:var(--surface-canvas);transform:translateY(-200%)}
 .skip:focus{transform:none}
 .shell{position:fixed;inset:0;block-size:100dvh;display:grid;grid-template-columns:var(--rail-width) minmax(0,1fr) var(--queue-width);grid-template-rows:minmax(0,1fr);overflow:hidden}
-.main{min-block-size:0;position:relative;overflow:auto;padding:0;display:block;scroll-padding-block-end:var(--space-12);background:var(--surface-primary)}
+.main{min-block-size:0;inline-size:100%;margin-inline:0;position:relative;overflow:auto;padding:0;display:block;scroll-padding-block-end:var(--space-12);background:var(--surface-primary)}
 .main .voice{position:sticky;inset-block-start:0;z-index:2;display:flex;align-items:end;justify-content:flex-end;gap:var(--space-2);padding:var(--space-3) var(--space-6);background:var(--surface-primary);border-block-end:var(--line-width) solid var(--line-subtle)}
 .voice label{display:grid;gap:var(--space-1);color:var(--text-secondary);font-size:var(--type-label)}
 select{min-block-size:var(--target);min-inline-size:var(--select-min);padding-inline:var(--space-3);border:0;border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-primary)}
@@ -23,6 +23,12 @@ aside{min-block-size:0;position:relative}.close{display:none}.mobile-header,.mob
 .footer-track strong,.footer-track span{grid-column:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.footer-track span{color:var(--text-secondary);font-size:var(--type-compact)}.desktop-player-footer>.range{padding-inline:var(--space-8)}
 
 @media(min-width:1024px){.shell{block-size:calc(100dvh - var(--footer-desktop))}.main .voice button{min-inline-size:auto}}
+@media(min-width:1800px){
+  .main:has(>.now){display:grid;grid-template-columns:minmax(0,1.25fr) minmax(360px,.75fr);grid-template-rows:auto minmax(0,1fr);overflow:hidden}
+  .main:has(>.now)>.desktop-voice{grid-column:1/-1}
+  .main:has(>.now)>.now{min-block-size:0;grid-column:1;grid-row:2;overflow:auto;border-inline-end:var(--line-width) solid var(--line-subtle)}
+  .main:has(>.now)>.search{min-block-size:0;inline-size:100%;max-inline-size:none;grid-column:2;grid-row:2;align-self:stretch;align-content:start;margin:0;padding:var(--space-8);overflow:auto;border-radius:0;background:var(--surface-recessed)}
+}
 @media(min-width:768px) and (max-width:1023px){
   .shell{grid-template-columns:var(--rail-collapsed) minmax(0,1fr)}
   aside{position:fixed;inset:0 0 0 auto;z-index:6;inline-size:min(var(--drawer-tablet),90vw);background:var(--surface-raised);transform:translateX(100%);opacity:0;pointer-events:none;transition:transform var(--motion-standard),opacity var(--motion-standard)}
