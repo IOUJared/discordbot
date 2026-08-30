@@ -379,7 +379,7 @@ test("Given unseekable playback fails When the event arrives Then seek is disabl
   )
   const toast = page.getByTestId("playback-failure-toast")
   await expect(toast).toContainText("Mountain Echoes could not be played")
-  await expect(toast).toHaveAttribute("role", "alert")
+  await expect(toast).toHaveAttribute("role", "status")
   await page.screenshot({
     path: "../../.omo/evidence/final-repair/seekable-failure-notifications/dashboard-failure.png",
     fullPage: true,

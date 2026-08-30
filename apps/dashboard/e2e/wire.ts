@@ -57,10 +57,11 @@ export const emptyRoom = {
   voice: { ...room.voice, connected: false, channelId: null },
 }
 
-type WireOptions = {
+export type WireOptions = {
   readonly state?: typeof room | typeof emptyRoom
   readonly history?: readonly ReturnType<typeof historyItem>[]
   readonly searchError?: boolean
+  readonly failureGate?: Promise<void>
   readonly failure?: {
     readonly version: 1
     readonly type: "playback.failed"
@@ -89,17 +90,23 @@ function historyItem() {
 export async function mockWire(page: Page, options: WireOptions = {}): Promise<void> {
   const state = options.state ?? room
   const history = options.history ?? [historyItem()]
+  let failureDelivered = false
   await page.routeWebSocket("**/ws", (socket) => {
-    socket.onMessage((message) => {
+    socket.onMessage(async (message) => {
       const parsed: unknown = JSON.parse(String(message))
       if (
         typeof parsed === "object" &&
         parsed !== null &&
         "type" in parsed &&
         parsed.type === "auth"
-      )
+      ) {
         socket.send(JSON.stringify({ version: 1, type: "state.snapshot", payload: state }))
-      if (options.failure !== undefined) socket.send(JSON.stringify(options.failure))
+        if (options.failure !== undefined && !failureDelivered) {
+          failureDelivered = true
+          await options.failureGate
+          socket.send(JSON.stringify(options.failure))
+        }
+      }
     })
   })
   await page.route("**/api/**", async (route) => route.fulfill({ json: state }))
