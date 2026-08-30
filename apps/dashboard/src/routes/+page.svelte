@@ -25,8 +25,62 @@
   import { connectSnapshotSocket, type SocketStatus } from "$lib/services/socket.js"
   import "./dashboard.css"
 
-  const apiUrl = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3000"
-  const wsUrl = `${apiUrl.replace(/^http/, "ws").replace(/\/$/, "")}/ws`
+  const defaultApiUrl = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3000"
+  const apiUrlStorageKey = "discord-music.api-url"
+  const knownInvalidApiHosts = new Set(["example.com", "example.github.io"])
+
+  let apiUrl = $state(defaultApiUrl)
+  const isHttpUrl = (value: string): boolean => /^https?:\/\/\S+/.test(value.trim())
+  const normalizeApiUrl = (value: string): string =>
+    isHttpUrl(value) ? value.trim().replace(/\/$/, "") : "http://127.0.0.1:3000"
+  const isAllowedApiHost = (value: string): boolean => {
+    if (!isHttpUrl(value)) return false
+    const parsed = new URL(value)
+    if (knownInvalidApiHosts.has(parsed.hostname)) return false
+    return true
+  }
+  const readStoredApiUrl = (): string | null => {
+    if (typeof localStorage === "undefined") return null
+    const stored = localStorage.getItem(apiUrlStorageKey)
+    if (stored === null) return null
+    const normalized = normalizeApiUrl(stored)
+    try {
+      const parsed = new URL(normalized)
+      if (!isAllowedApiHost(normalized)) return null
+      return parsed.toString().replace(/\/$/, "")
+    } catch {
+      return null
+    }
+  }
+  const deriveFallbackApiUrl = (): string => {
+    if (typeof location === "undefined") return normalizeApiUrl(defaultApiUrl)
+    if (location.hostname.endsWith(".github.io")) return normalizeApiUrl(defaultApiUrl)
+    return normalizeApiUrl(`${location.origin}/api`)
+  }
+  const resolveApiUrl = (): string => {
+    if (typeof location === "undefined") return normalizeApiUrl(defaultApiUrl)
+    const query = new URLSearchParams(location.search).get("api")
+    const defaultCandidate = isAllowedApiHost(defaultApiUrl) ? defaultApiUrl : deriveFallbackApiUrl()
+    const candidate = query ?? readStoredApiUrl() ?? defaultCandidate
+    const normalized = isAllowedApiHost(candidate)
+      ? normalizeApiUrl(candidate)
+      : "http://127.0.0.1:3000"
+    const finalApiUrl = isAllowedApiHost(normalized) ? normalized : "http://127.0.0.1:3000"
+    if (query !== null && isHttpUrl(query) && typeof localStorage !== "undefined") {
+      localStorage.setItem(apiUrlStorageKey, normalized)
+      const nextParams = new URLSearchParams(location.search)
+      nextParams.delete("api")
+      const suffix = nextParams.toString()
+      const next = `${location.pathname}${suffix.length === 0 ? "" : `?${suffix}`}`
+      history.replaceState(null, "", next || location.pathname)
+    }
+    return finalApiUrl
+  }
+  const wsUrl = $derived(`${apiUrl.replace(/^http/, "ws")}/ws`)
+  $effect(() => {
+    const resolved = resolveApiUrl()
+    apiUrl = resolved
+  })
   let session = $state<Session | null>(null)
   let snapshot = $state<PlayerState | null>(null)
   let channels = $state<readonly VoiceChannel[]>([])
@@ -50,7 +104,7 @@
   let displayPosition = $state(0)
   let disconnect: (() => void) | null = null
   const store = typeof sessionStorage === "undefined" ? null : createSessionStore(sessionStorage)
-  const api = createApi(apiUrl, () => session?.token ?? null)
+  const api = $derived.by(() => createApi(apiUrl, () => session?.token ?? null))
 
   const applyState = (next: PlayerState): void => { snapshot = next; observedAt = Date.now(); displayPosition = next.player.positionMs; error = null }
   const refresh = async (): Promise<void> => { applyState(await api.state()) }
