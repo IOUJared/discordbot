@@ -1,3 +1,4 @@
+import { OpusEncoder } from "@discordjs/opus"
 import { generateDependencyReport } from "@discordjs/voice"
 import { describe, expect, it } from "vitest"
 
@@ -5,15 +6,14 @@ describe("Discord voice dependencies", () => {
   it("loads the voice runtime and the native Opus implementation", () => {
     // Given
     const report = generateDependencyReport()
+    const pcmFrame = Buffer.alloc(3_840)
 
     // When
     const hasVoiceRuntime = report.includes("@discordjs/voice")
-    const hasNativeOpus = !report.includes("@discordjs/opus: not found")
+    const opusPacket = new OpusEncoder(48_000, 2).encode(pcmFrame)
 
     // Then
-    expect({ hasVoiceRuntime, hasNativeOpus }).toEqual({
-      hasVoiceRuntime: true,
-      hasNativeOpus: true,
-    })
+    expect(hasVoiceRuntime).toBe(true)
+    expect(opusPacket.byteLength).toBeGreaterThan(0)
   })
 })
