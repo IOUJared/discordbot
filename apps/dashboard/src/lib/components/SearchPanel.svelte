@@ -22,6 +22,8 @@
 
   let query = $state("")
   let hasSearched = $state(false)
+  let visibleCount = $state(3)
+  const visibleResults = $derived(results.slice(0, visibleCount))
 
   const providerLabel = (provider: SearchResult["track"]["provider"]): string =>
     provider === "mock_tidal" ? "Mock TIDAL" : "YouTube"
@@ -32,6 +34,7 @@
 
   function submit(): void {
     hasSearched = true
+    visibleCount = 3
     onsearch(query)
   }
 </script>
@@ -71,10 +74,13 @@
   {:else if results.length > 0}
     <div class="result-summary" aria-live="polite">
       <span>Search results</span>
-      <strong>{results.length} {results.length === 1 ? "match" : "matches"}</strong>
+      <strong>
+        {visibleResults.length < results.length ? `${visibleResults.length} of ` : ""}{results.length}
+        {results.length === 1 ? "match" : "matches"}
+      </strong>
     </div>
     <ul>
-      {#each results as result, index (result.track.id)}
+      {#each visibleResults as result, index (result.track.id)}
         <li data-testid="search-result" data-track-id={result.track.id}>
           <div class="result-art">
             {#if result.track.artworkUrl}
@@ -123,6 +129,16 @@
         </li>
       {/each}
     </ul>
+    {#if visibleResults.length < results.length}
+      <div class="search-more">
+        <Button
+          label="Search more"
+          onclick={() => {
+            visibleCount = Math.min(visibleCount + 3, results.length)
+          }}
+        />
+      </div>
+    {/if}
   {:else if hasSearched && error === null}
     <div class="empty">
       <MagnifyingGlass size={28} aria-hidden="true" />
@@ -145,6 +161,7 @@
   .result-art{grid-area:art;inline-size:var(--result-art,var(--search-art));block-size:var(--result-art,var(--search-art));display:grid;place-items:center;overflow:hidden;border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-muted)}.result-art img{inline-size:100%;block-size:100%;display:block;object-fit:cover}
   .result-copy{grid-area:copy;min-inline-size:0;display:grid;align-content:start;gap:var(--space-1)}.result-heading{min-inline-size:0;display:flex;align-items:center;gap:var(--space-2)}.result-heading strong,.artist{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.result-heading strong{min-inline-size:0}.artist{color:var(--text-secondary)}.best{flex:none;padding:var(--space-1) var(--space-2);border-radius:var(--radius-control);background:var(--indigo-100);color:var(--indigo-600);font-size:var(--type-label)}.metadata{display:flex;align-items:center;gap:var(--space-2);color:var(--text-muted);font-family:var(--font-mono);font-size:var(--type-label)}.metadata span{display:inline;white-space:nowrap}.metadata span+span::before{content:"•";margin-inline-end:var(--space-2)}
   .result-actions{grid-area:actions;display:flex;flex-wrap:wrap;gap:var(--space-2)}.result-actions button{min-inline-size:0;min-block-size:var(--target);display:flex;align-items:center;justify-content:center;gap:var(--space-2);padding-inline:var(--space-3);border:0;border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-secondary)}.result-actions button:hover{background:var(--surface-hover);color:var(--text-primary)}.result-actions .add{background:var(--indigo-300);color:var(--text-primary)}.result-actions .add:hover{background:var(--indigo-400)}
+  .search-more{display:grid}
   .empty{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:var(--space-3);min-block-size:calc(var(--space-12) + var(--space-4));padding:var(--space-4);background:var(--surface-primary);border-radius:var(--radius-control);color:var(--text-muted)}.empty div{min-inline-size:0;display:grid;gap:var(--space-1)}.empty strong{color:var(--text-secondary)}.empty span{overflow-wrap:anywhere}
   .loading-results{display:grid;gap:var(--space-3)}.result-skeleton{display:grid;grid-template-columns:var(--result-art,var(--search-art)) minmax(0,1fr);gap:var(--space-3);padding:var(--space-3);background:var(--surface-primary);border-radius:var(--radius-surface)}.skeleton-art{inline-size:var(--result-art,var(--search-art));block-size:var(--result-art,var(--search-art));background:var(--surface-raised);border-radius:var(--radius-control)}.skeleton-copy{display:grid;align-content:center;gap:var(--space-2)}.skeleton-copy i{display:block;block-size:var(--space-2);inline-size:85%;background:var(--surface-raised);border-radius:var(--radius-control)}.skeleton-copy i:nth-child(2){inline-size:60%}.skeleton-copy i:nth-child(3){inline-size:40%}
   .error{color:var(--status-error)}.sr-only{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip:rect(0,0,0,0)}

@@ -540,6 +540,56 @@ for (const width of [375, 768, 1920]) {
   })
 }
 
+for (const width of [375, 768, 1920]) {
+  test(`Given five search matches at ${width}px When Search more is pressed Then the remaining results are revealed`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await mockWire(page)
+    await page.unroute("**/api/search")
+    await page.route("**/api/search", async (route) => {
+      await route.fulfill({
+        json: {
+          results: Array.from({ length: 5 }, (_, index) => ({
+            track: track(`search-${index + 1}`, `Northern Lines ${index + 1}`, "Small Hours"),
+            score: 1 - index * 0.1,
+          })),
+        },
+      })
+    })
+    await page.goto("/#code=search-more")
+    await page.getByPlaceholder("Song, artist, or YouTube link").fill("Northern Lines")
+    await page.getByRole("button", { name: "Search", exact: true }).click()
+
+    const results = page.getByTestId("search-result")
+    await expect(results).toHaveCount(3)
+    const searchMore = page.getByRole("button", { name: "Search more", exact: true })
+    await searchMore.scrollIntoViewIfNeeded()
+    await expect(searchMore).toBeVisible()
+    await page.screenshot({
+      path: `../../.omo/evidence/search-more/final-collapsed-${width}.png`,
+    })
+
+    await searchMore.click()
+
+    await expect(results).toHaveCount(5)
+    await expect(page.getByText("5 matches", { exact: true })).toBeVisible()
+    await expect(searchMore).toHaveCount(0)
+    await results.last().scrollIntoViewIfNeeded()
+    const footer =
+      width >= 1024 ? page.locator(".desktop-player-footer") : page.locator(".mobile-footer")
+    await expect(footer).toBeVisible()
+    const lastResultBox = await results.last().boundingBox()
+    const footerBox = await footer.boundingBox()
+    expect((lastResultBox?.y ?? 900) + (lastResultBox?.height ?? 0)).toBeLessThanOrEqual(
+      footerBox?.y ?? 0,
+    )
+    await page.screenshot({
+      path: `../../.omo/evidence/search-more/final-expanded-${width}.png`,
+    })
+  })
+}
+
 test("Given provider settings When the simulator is connected Then priority can be changed without credentials", async ({
   page,
 }) => {
