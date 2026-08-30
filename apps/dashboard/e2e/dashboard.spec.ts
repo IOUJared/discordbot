@@ -605,6 +605,37 @@ test("Given an ultrawide desktop When the room loads Then the workspace fills th
   })
 })
 
+test("Given a 1080p desktop When the room loads Then the player footer does not waste vertical space", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await mockWire(page)
+  await page.goto("/#code=desktop-1080p")
+  await expect(page.getByTestId("current-track")).toHaveAttribute("data-track-id", "track-current")
+
+  const geometry = await page.evaluate(() => {
+    const shell = document.querySelector(".shell")?.getBoundingClientRect()
+    const footer = document.querySelector(".desktop-player-footer")?.getBoundingClientRect()
+    return {
+      shellBottom: shell?.bottom,
+      footerTop: footer?.top,
+      footerHeight: footer?.height,
+      viewportHeight: window.innerHeight,
+    }
+  })
+
+  expect(geometry).toEqual({
+    shellBottom: 968,
+    footerTop: 968,
+    footerHeight: 112,
+    viewportHeight: 1080,
+  })
+  await page.screenshot({
+    path: "../../.omo/evidence/dashboard/product-1920x1080.png",
+    fullPage: true,
+  })
+})
+
 test("Given the desktop reference geometry When the room loads Then comparison evidence is captured", async ({
   page,
 }) => {
@@ -624,7 +655,7 @@ test("Given the desktop reference geometry When the room loads Then comparison e
       footer: footer?.getBoundingClientRect().height,
     }
   })
-  expect(geometry).toEqual({ nav: 337, main: 670, queue: 561, footer: 156 })
+  expect(geometry).toEqual({ nav: 337, main: 670, queue: 561, footer: 104 })
   await page.screenshot({
     path: "../../.omo/evidence/dashboard/comparison-actual-desktop.png",
     fullPage: true,
