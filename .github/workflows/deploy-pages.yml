@@ -29,6 +29,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @discord-music/contracts build
       - name: Validate public API URL
         shell: bash
         run: test -n "$VITE_API_URL"
