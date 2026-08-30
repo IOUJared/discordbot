@@ -18,7 +18,6 @@ const searchEntrySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   uploader: z.string().min(1),
-  webpage_url: z.url(),
   duration: z.number().nonnegative(),
   thumbnail: z.url().optional(),
 })
@@ -78,7 +77,7 @@ export function parseSearchOutput(output: string): readonly SearchResult[] {
         provider: "youtube",
         title: entry.title,
         artist: entry.uploader,
-        url: entry.webpage_url,
+        url: `https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}`,
         durationMs: DurationMsSchema.parse(Math.round(entry.duration * 1_000)),
         artworkUrl:
           entry.thumbnail ?? `https://i.ytimg.com/vi/${encodeURIComponent(entry.id)}/hqdefault.jpg`,

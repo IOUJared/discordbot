@@ -66,7 +66,6 @@ describe("YouTube yt-dlp boundary", () => {
           id: "video-2",
           title: "Another Song",
           uploader: "Another Artist",
-          webpage_url: "https://www.youtube.com/watch?v=video-2",
           duration: 120,
         },
       ],
@@ -77,6 +76,7 @@ describe("YouTube yt-dlp boundary", () => {
 
     // Then
     expect(results.at(0)?.track.artworkUrl).toBe("https://i.ytimg.com/vi/video-2/hqdefault.jpg")
+    expect(results.at(0)?.track.url).toBe("https://www.youtube.com/watch?v=video-2")
   })
 
   it("caches normalized repeat searches until the cache entry expires", async () => {
