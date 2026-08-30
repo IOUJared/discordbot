@@ -9,7 +9,7 @@
   --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px; --space-12:48px;
   --radius-control:6px; --radius-surface:8px; --target:44px; --line-width:1px; --focus-width:2px;
   --rail-width:clamp(216px,21.492347vw,337px); --rail-collapsed:64px; --queue-width:clamp(320px,35.778061vw,561px); --footer-desktop:clamp(104px,10.37037dvh,112px); --footer-art:96px; --header-mobile:56px; --footer-mobile:72px;
-  --panel-max:720px; --art-max:598px; --art-ratio:1.2916; --art-mobile:clamp(220px,65vw,244px); --drawer-tablet:420px; --drawer-mobile:78dvh; --queue-row:64px;
+  --panel-max:720px; --art-max:598px; --art-ratio:1.2916; --art-mobile:clamp(220px,65vw,244px); --search-art:72px; --search-art-mobile:64px; --drawer-tablet:420px; --drawer-mobile:78dvh; --queue-row:64px;
   --select-min:180px; --login-max:520px; --page-max:1280px; --skeleton-max:320px; --queue-dock-min:240px; --showcase-media-min:160px; --showcase-media-max:240px; --showcase-empty:160px; --showcase-queue:260px;
   --type-display:32px; --type-h1:24px; --type-h2:20px; --type-h3:16px; --type-body:15px; --type-compact:14px; --type-label:12px; --type-fluid:3vw; --line-tight:1.12; --tracking-label:.04em;
   --font-ui:"Instrument Sans","Noto Sans",ui-sans-serif,system-ui,sans-serif; --font-mono:"JetBrains Mono",ui-monospace,monospace;

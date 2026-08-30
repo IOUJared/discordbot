@@ -466,15 +466,26 @@ test("Given OAuth callback When the listener controls playback Then the real das
   await page.goto("/#code=one-time")
   await expect(page.getByTestId("current-track")).toHaveAttribute("data-track-id", "track-current")
   await expect(page).toHaveURL(/\/$/)
-  await page.getByPlaceholder("Track name or link").fill("Northern Lines")
+  await page.getByPlaceholder("Song, artist, or YouTube link").fill("Northern Lines")
   await page.getByRole("button", { name: "Search", exact: true }).click()
   expect(searchRequest).toEqual({ method: "POST", body: { q: "Northern Lines" } })
-  await expect(page.getByTestId("search-result")).toHaveAttribute("data-track-id", "search-1")
+  const searchResult = page.getByTestId("search-result")
+  await expect(searchResult).toHaveAttribute("data-track-id", "search-1")
+  await expect(page.getByText("1 match", { exact: true })).toBeVisible()
+  await expect(searchResult.getByRole("img", { name: "Artwork for Northern Lines" })).toBeVisible()
+  await expect(searchResult.getByText("4:00", { exact: true })).toBeVisible()
+  await expect(searchResult.getByText("YouTube", { exact: true })).toBeVisible()
+  await expect(searchResult.getByText("Best match", { exact: true })).toBeVisible()
+  await expect(
+    searchResult.getByRole("button", { name: "Add Northern Lines to queue" }),
+  ).toBeVisible()
+  await expect(searchResult.getByRole("button", { name: "Play Northern Lines next" })).toBeVisible()
+  await searchResult.scrollIntoViewIfNeeded()
   await page.screenshot({
     path: "../../.omo/evidence/dashboard/search-results.png",
     fullPage: true,
   })
-  await page.getByRole("button", { name: "Add Northern Lines to end" }).click()
+  await page.getByRole("button", { name: "Add Northern Lines to queue" }).click()
   const player = page.getByRole("region", { name: "Mountain Echoes" })
   const footer = page.locator(".desktop-player-footer")
   await footer.getByRole("button", { name: "Pause playback" }).click()
@@ -491,6 +502,43 @@ test("Given OAuth callback When the listener controls playback Then the real das
   await expect(page.getByTestId("auth-anonymous")).toBeVisible()
   await page.screenshot({ path: "../../.omo/evidence/dashboard/login.png", fullPage: true })
 })
+
+for (const width of [375, 768, 1920]) {
+  test(`Given search results at ${width}px When a match loads Then its preview and choices remain clear`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await mockWire(page)
+    await page.goto("/#code=search-preview")
+    await page.getByPlaceholder("Song, artist, or YouTube link").fill("Northern Lines")
+    await page.getByRole("button", { name: "Search", exact: true }).click()
+
+    const result = page.getByTestId("search-result")
+    await result.scrollIntoViewIfNeeded()
+    await expect(result.getByRole("img", { name: "Artwork for Northern Lines" })).toBeVisible()
+    await expect(result.getByRole("button", { name: "Add Northern Lines to queue" })).toBeVisible()
+    await expect(result.getByRole("button", { name: "Play Northern Lines next" })).toBeVisible()
+    const box = await result.boundingBox()
+    expect(box?.x ?? -1).toBeGreaterThanOrEqual(0)
+    expect((box?.x ?? width) + (box?.width ?? width)).toBeLessThanOrEqual(width)
+    if (width === 768) {
+      const footer = page.locator(".mobile-footer")
+      const footerBox = await footer.boundingBox()
+      for (const actionName of ["Add Northern Lines to queue", "Play Northern Lines next"]) {
+        const action = result.getByRole("button", { name: actionName })
+        const actionBox = await action.boundingBox()
+        expect((actionBox?.y ?? 900) + (actionBox?.height ?? 0)).toBeLessThanOrEqual(
+          footerBox?.y ?? 0,
+        )
+        await expect(action).toBeInViewport()
+      }
+    }
+    await page.screenshot({
+      path: `../../.omo/evidence/search-redesign/results-${width}.png`,
+      fullPage: true,
+    })
+  })
+}
 
 test("Given provider settings When the simulator is connected Then priority can be changed without credentials", async ({
   page,

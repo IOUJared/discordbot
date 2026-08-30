@@ -47,7 +47,7 @@ test("Given search is unavailable When a request is made Then the failure is vis
   await page.setViewportSize({ width: 1280, height: 800 })
   await mockWire(page, { searchError: true })
   await page.goto("/#code=error")
-  await page.getByPlaceholder("Track name or link").fill("broken request")
+  await page.getByPlaceholder("Song, artist, or YouTube link").fill("broken request")
   await page.getByRole("button", { name: "Search", exact: true }).click()
   const alert = page.getByText("Search is temporarily unavailable")
   await expect(alert).toBeVisible()
