@@ -204,7 +204,7 @@ async function fixture(): Promise<{ readonly app: FastifyInstance; readonly play
     search: { search: async () => [] },
     guildId,
     history: { list: () => [] },
-    voiceChannels: async () => [{ id: channelId, name: "General" }],
+    voiceChannels: async () => [{ id: channelId, name: "General", memberCount: 3 }],
     dependencies: { ffmpeg: true, ytDlp: true },
     discordReady: () => true,
     startedAtMs: Date.now(),
@@ -220,6 +220,24 @@ describe("Fastify API", () => {
     const response = await app.inject({ method: "GET", url: "/health" })
     expect(response.statusCode).toBe(200)
     expect(Object.keys(response.json()).sort()).toEqual(["discord", "status", "uptime", "voice"])
+  })
+
+  it("Given an authenticated listener When voice channels load Then occupancy is returned", async () => {
+    // Given
+    const { app } = await fixture()
+
+    // When
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/voice-channels",
+      headers: { authorization: "Bearer valid" },
+    })
+
+    // Then
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({
+      channels: [{ id: channelId, name: "General", memberCount: 3 }],
+    })
   })
 
   it("Given protected routes When no bearer is provided Then each returns 401", async () => {

@@ -164,6 +164,10 @@ async function voiceChannels(guild: Guild) {
         (channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice) &&
         channel.joinable,
     )
-    .map((channel) => ({ id: ChannelIdSchema.parse(channel.id), name: channel.name }))
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .sort((left, right) => left.rawPosition - right.rawPosition)
+    .map((channel) => ({
+      id: ChannelIdSchema.parse(channel.id),
+      name: channel.name,
+      memberCount: channel.members.filter((member) => !member.user.bot).size,
+    }))
 }

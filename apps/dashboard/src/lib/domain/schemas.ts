@@ -109,7 +109,15 @@ export const ApiErrorSchema = z.strictObject({
 })
 
 export const ChannelsSchema = z.strictObject({
-  channels: z.readonly(z.array(z.strictObject({ id: identifier, name: identifier }))),
+  channels: z.readonly(
+    z.array(
+      z.strictObject({
+        id: identifier,
+        name: identifier,
+        memberCount: z.int().check(z.nonnegative()),
+      }),
+    ),
+  ),
 })
 
 export const ResultsSchema = z.strictObject({ results: z.readonly(z.array(SearchResultSchema)) })

@@ -1,27 +1,47 @@
 <script lang="ts">
-  import House from "phosphor-svelte/lib/House"
-  import Lock from "phosphor-svelte/lib/Lock"
   import SpinnerGap from "phosphor-svelte/lib/SpinnerGap"
-  import Badge from "$lib/components/Badge.svelte"
-  import Button from "$lib/components/Button.svelte"
+  import RoomNav from "$lib/components/RoomNav.svelte"
+  import type { VoiceChannel } from "$lib/services/api.js"
   import type { ShowcaseState } from "./state-model"
-  let { state }: { state: ShowcaseState } = $props()
+
+  let { state: showcaseState }: { state: ShowcaseState } = $props()
+
+  const channels: readonly VoiceChannel[] = [
+    { id: "voice-main", name: "Main Room", memberCount: 2 },
+    { id: "voice-lounge", name: "Lounge", memberCount: 3 },
+  ]
+
+  let activeChannelId = $state<string | null>("voice-main")
 </script>
 
-<nav class:hover-state={state === "hover"} class:focus-state={state === "focus-visible"} aria-label={`Room navigation ${state} state`}>
-  <p class="eyebrow">Room</p>
-  {#if state === "empty"}
-    <div class="message"><strong>No active room</strong><span>Choose a room to start listening.</span></div>
-  {:else}
-    <Button label="Main Room" pressed={state === "active"} disabled={state === "disabled"} loading={state === "loading"} />
-    <button class="room-action" disabled={state === "disabled"}><House size={18} aria-hidden="true" />Stage</button>
-    <button class="room-action" disabled title="Study is unavailable"><Lock size={18} aria-hidden="true" />Study</button>
-    <Badge status={state === "loading" ? "reconnecting" : state === "error" ? "disconnected" : "connected"} label={state === "loading" ? "Reconnecting" : state === "error" ? "Room load failed" : "Voice connected"} />
-    {#if state === "loading"}<SpinnerGap class="spin" size={18} aria-hidden="true" />{/if}
-    {#if state === "error"}<p class="error" role="alert">Rooms could not be loaded.</p>{/if}
-  {/if}
-</nav>
+<div
+  class:hover-state={showcaseState === "hover"}
+  class:focus-state={showcaseState === "focus-visible"}
+  aria-label={`Room navigation ${showcaseState} state`}
+>
+  <RoomNav
+    channels={showcaseState === "empty" || showcaseState === "error" ? [] : channels}
+    {activeChannelId}
+    voiceConnected={activeChannelId !== null}
+    socketStatus={showcaseState === "loading" ? "reconnecting" : showcaseState === "error" ? "disconnected" : "connected"}
+    view="player"
+    busy={showcaseState === "disabled" || showcaseState === "loading"}
+    onchange={() => undefined}
+    onchannel={(channel) => (activeChannelId = channel.id)}
+    logout={() => undefined}
+  />
+  {#if showcaseState === "loading"}<SpinnerGap class="spin" size={18} aria-label="Loading voice channels" />{/if}
+  {#if showcaseState === "error"}<p class="error" role="alert">Voice channels could not be loaded.</p>{/if}
+</div>
 
 <style>
-  nav{min-block-size:calc(var(--space-12) * 4);display:grid;align-content:start;gap:var(--space-2);padding:var(--space-3);background:var(--surface-recessed)}.room-action{min-block-size:var(--target);display:flex;align-items:center;gap:var(--space-2);padding-inline:var(--space-3);border:0;border-radius:var(--radius-control);background:transparent;color:var(--text-secondary)}.room-action:hover:not(:disabled),.hover-state :global(button:first-of-type){background:var(--surface-hover);color:var(--text-primary)}.focus-state :global(button:first-of-type){outline:var(--focus-width) solid var(--focus-ring);outline-offset:var(--focus-width)}.message{display:grid;gap:var(--space-1);color:var(--text-secondary)}.error{color:var(--status-error)}:global(.spin){animation:spin var(--motion-standard) linear infinite}@keyframes spin{to{transform:rotate(1turn)}}@media(prefers-reduced-motion:reduce){:global(.spin){animation:none}}
+  div{position:relative;min-block-size:calc(var(--space-12) * 5);background:var(--surface-recessed)}
+  div :global(nav){min-block-size:inherit;border:0;padding:var(--space-3);gap:var(--space-3)}
+  div :global(.status){margin-block-start:0;padding-block-start:var(--space-3)}
+  .hover-state :global(.channels button:first-of-type){background:var(--surface-hover);color:var(--text-primary)}
+  .focus-state :global(.channels button:first-of-type){outline:var(--focus-width) solid var(--focus-ring);outline-offset:var(--focus-width)}
+  .error{position:absolute;inset-inline:var(--space-4);inset-block-end:var(--space-3);color:var(--status-error);font-size:var(--type-compact)}
+  :global(.spin){position:absolute;inset-inline-end:var(--space-4);inset-block-start:var(--space-4);animation:spin var(--motion-standard) linear infinite}
+  @keyframes spin{to{transform:rotate(1turn)}}
+  @media(prefers-reduced-motion:reduce){:global(.spin){animation:none}}
 </style>

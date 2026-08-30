@@ -15,26 +15,65 @@ test("Given the signed-out page When Discord sign-in is clicked Then GET OAuth n
   expect(method).toBe("GET")
 })
 
-test("Given disconnected desktop voice When no channel is selected Then the channel picker remains usable", async ({
+test("Given disconnected desktop voice When channels load Then each real channel remains usable", async ({
   page,
 }) => {
-  // Given: an authenticated desktop listener who has not joined voice.
+  // Given
   await mockWire(page, { state: emptyRoom })
+
+  // When
   await page.goto("/#code=one-time")
 
-  // When: the voice controls render without a selected channel.
-  const channelPicker = page.getByRole("combobox", { name: "Voice channel" }).first()
-  const channelPickerField = channelPicker.locator("xpath=..")
+  // Then
+  const mainRoom = page.getByRole("button", { name: "Main Room, 2 members" })
+  const lounge = page.getByRole("button", { name: "Lounge, 3 members" })
+  await expect(mainRoom).toBeVisible()
+  await expect(mainRoom).toBeEnabled()
+  await expect(lounge).toBeVisible()
+  await expect(lounge).toBeEnabled()
+  expect((await mainRoom.boundingBox())?.width).toBeGreaterThanOrEqual(160)
+  await expect(page.getByRole("button", { name: /Study|Chill/ })).toHaveCount(0)
+})
 
-  // Then: the picker is visible and choosing a channel enables Join voice.
-  await expect(channelPicker).toBeVisible()
-  const pickerBox = await channelPickerField.boundingBox()
-  expect(pickerBox?.width).toBeGreaterThanOrEqual(160)
-  await expect(page.getByRole("button", { name: "Join voice" }).first()).toBeDisabled()
-  await channelPicker.selectOption("voice-1")
-  await expect(page.getByRole("button", { name: "Join voice" }).first()).toBeEnabled()
-  const selectedPickerBox = await channelPickerField.boundingBox()
-  expect(selectedPickerBox?.y).toBeGreaterThanOrEqual(0)
+test("Given real Discord voice channels When one is clicked Then the bot connects to that channel", async ({
+  page,
+}) => {
+  // Given
+  let joinBody: unknown = null
+  await mockWire(page, { state: emptyRoom })
+  await page.unroute("**/api/voice-channels")
+  await page.route("**/api/voice-channels", async (route) =>
+    route.fulfill({
+      json: {
+        channels: [
+          { id: "voice-1", name: "Main Room", memberCount: 2 },
+          { id: "voice-2", name: "Lounge", memberCount: 3 },
+        ],
+      },
+    }),
+  )
+  await page.unroute("**/api/voice/join")
+  await page.route("**/api/voice/join", async (route) => {
+    joinBody = route.request().postDataJSON()
+    await route.fulfill({
+      json: {
+        ...emptyRoom,
+        version: 9,
+        voice: { ...emptyRoom.voice, connected: true, channelId: "voice-2" },
+      },
+    })
+  })
+  await page.goto("/#code=discord-channels")
+
+  // When
+  await page.getByRole("button", { name: "Lounge, 3 members" }).click()
+
+  // Then
+  expect(joinBody).toEqual({ channelId: "voice-2" })
+  await expect(page.getByRole("button", { name: "Lounge, 3 members" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  )
 })
 
 test("Given a desktop queue When an item is pointer-dragged Then its unique ID is reordered optimistically", async ({
@@ -357,7 +396,7 @@ test("Given a dropped socket When reconnect starts Then status is exposed", asyn
   await page.route("**/api/**", async (route) =>
     route.fulfill({
       json: route.request().url().includes("voice-channels")
-        ? { channels: [{ id: "voice-1", name: "Main Room" }] }
+        ? { channels: [{ id: "voice-1", name: "Main Room", memberCount: 2 }] }
         : room,
     }),
   )

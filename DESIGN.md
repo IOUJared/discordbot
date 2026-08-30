@@ -134,9 +134,9 @@ Build a non-product `/design-system` showcase first. At 375px, 768px, and 1280px
 
 ### Room navigation
 
-- **Structure:** `nav > button/listitem > Phosphor icon + room label + optional status`.
+- **Structure:** `nav > channel button > Phosphor voice icon + real Discord channel name + human member count`. Channels come from the connected guild in Discord order; invented room names are forbidden.
 - **Variants:** labeled desktop, icon rail tablet, room-switch trigger mobile.
-- **States:** common showcase contract; selected state uses `--indigo-100` plus a non-color current indicator; disabled rooms explain why by accessible description.
+- **States:** common showcase contract; the bot's connected channel uses `--indigo-100` plus a non-color current indicator. Clicking any other joinable channel joins or moves the bot there; a zero-member channel remains actionable.
 - **Accessibility / motion:** arrow-key roving focus only if implemented as a composite widget; otherwise native button tab sequence. The active indicator moves by opacity/color transition, not layout shift.
 
 ### Now-playing panel and artwork frame

@@ -52,4 +52,5 @@ export interface SearchApi {
 export type VoiceChannel = {
   readonly id: ChannelId
   readonly name: string
+  readonly memberCount: number
 }

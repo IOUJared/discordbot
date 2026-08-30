@@ -119,8 +119,8 @@ export async function mockWire(page: Page, options: WireOptions = {}): Promise<v
     route.fulfill({
       json: {
         channels: [
-          { id: "voice-1", name: "Main Room" },
-          { id: "voice-2", name: "Lounge" },
+          { id: "voice-1", name: "Main Room", memberCount: 2 },
+          { id: "voice-2", name: "Lounge", memberCount: 3 },
         ],
       },
     }),

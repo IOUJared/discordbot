@@ -4,6 +4,7 @@
 .main{min-block-size:0;inline-size:100%;margin-inline:0;position:relative;overflow:auto;padding:0;display:block;scroll-padding-block-end:var(--space-12);background:var(--surface-primary)}
 .main .voice{position:sticky;inset-block-start:0;z-index:2;display:flex;align-items:end;justify-content:flex-end;gap:var(--space-2);padding:var(--space-3) var(--space-6);background:var(--surface-primary);border-block-end:var(--line-width) solid var(--line-subtle)}
 .voice label{display:grid;gap:var(--space-1);color:var(--text-secondary);font-size:var(--type-label)}
+.voice-context{margin-inline-end:auto;align-self:center;color:var(--text-secondary)}
 select{min-block-size:var(--target);min-inline-size:var(--select-min);padding-inline:var(--space-3);border:0;border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-primary)}
 aside{min-block-size:0;position:relative}.close{display:none}.mobile-header,.mobile-footer,.mobile-voice,.mobile-queue-preview{display:none}
 .main>section.search{margin-block:var(--space-8) var(--space-12)}
