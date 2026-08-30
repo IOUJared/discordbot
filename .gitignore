@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.svelte-kit/
+build/
+test-results/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

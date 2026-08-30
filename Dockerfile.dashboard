@@ -1,0 +1,20 @@
+FROM node:24-alpine AS build
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml biome.json ./
+COPY apps/server/package.json apps/server/package.json
+COPY apps/dashboard/package.json apps/dashboard/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+RUN pnpm install --filter @discord-music/dashboard... --frozen-lockfile
+COPY apps/dashboard apps/dashboard
+COPY packages/contracts packages/contracts
+ARG VITE_API_URL=http://127.0.0.1:3000
+ARG BASE_PATH=
+ENV VITE_API_URL=$VITE_API_URL
+ENV BASE_PATH=$BASE_PATH
+RUN pnpm --filter @discord-music/dashboard... build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/apps/dashboard/build /usr/share/nginx/html
+EXPOSE 8080

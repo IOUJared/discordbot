@@ -1,0 +1,36 @@
+{
+  "name": "@discord-music/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite dev",
+    "lint": "biome check src/lib/domain src/lib/services tests e2e",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "pnpm build && playwright test",
+    "typecheck": "svelte-check --tsgo --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@discord-music/contracts": "workspace:*",
+    "@fontsource/instrument-sans": "5.2.8",
+    "@fontsource/jetbrains-mono": "5.2.8",
+    "ky": "1.10.0",
+    "phosphor-svelte": "3.1.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "jsdom": "30.0.1",
+    "svelte": "5.57.0",
+    "svelte-check": "4.7.6",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "6.0.3",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

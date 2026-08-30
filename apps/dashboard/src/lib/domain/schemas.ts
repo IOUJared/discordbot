@@ -1,0 +1,96 @@
+import { z } from "zod/mini"
+
+const identifier = z.string().check(z.trim(), z.minLength(1), z.maxLength(256))
+const trackId = identifier.brand<"TrackId">()
+const queueItemId = identifier.brand<"QueueItemId">()
+const userId = identifier.brand<"UserId">()
+const guildId = identifier.brand<"GuildId">()
+const channelId = identifier.brand<"ChannelId">()
+const historyItemId = identifier.brand<"HistoryItemId">()
+const timestamp = z.iso.datetime({ offset: true }).brand<"Timestamp">()
+const duration = z.int().check(z.nonnegative()).brand<"DurationMs">()
+const position = z.int().check(z.nonnegative()).brand<"PositionMs">()
+const volume = z.int().check(z.minimum(0), z.maximum(200)).brand<"Volume">()
+
+export const SessionSchema = z.strictObject({
+  token: z.string().check(z.minLength(1)),
+  expiresAt: z.iso.datetime(),
+})
+
+export const TrackSchema = z.strictObject({
+  id: trackId,
+  provider: z.enum(["youtube", "spotify", "soundcloud", "url", "mock_tidal"]),
+  title: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  artist: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  url: z.url(),
+  durationMs: duration,
+  artworkUrl: z.optional(z.url()),
+})
+
+export const QueueItemSchema = z.strictObject({
+  id: queueItemId,
+  track: TrackSchema,
+  requestedBy: userId,
+  addedAt: timestamp,
+})
+
+export const SearchResultSchema = z.strictObject({
+  track: TrackSchema,
+  score: z.number().check(z.minimum(0), z.maximum(1)),
+})
+
+const playerSchema = z.strictObject({
+  guildId,
+  queue: z.readonly(z.array(QueueItemSchema)),
+  currentItem: z.nullable(QueueItemSchema),
+  positionMs: position,
+  volume,
+  isPaused: z.boolean(),
+  loopMode: z.enum(["off", "track", "queue"]),
+})
+
+const voiceSchema = z.strictObject({
+  guildId,
+  connected: z.boolean(),
+  channelId: z.nullable(channelId),
+  muted: z.boolean(),
+  deafened: z.boolean(),
+})
+
+export const PlayerStateSchema = z.strictObject({
+  version: z.int().check(z.nonnegative()),
+  player: playerSchema,
+  voice: voiceSchema,
+  providers: z.strictObject({
+    preference: z.enum(["mock_tidal_first", "youtube_only"]),
+    mockTidalConnected: z.boolean(),
+  }),
+})
+
+export const PlayerStateMessageSchema = z.strictObject({
+  version: z.literal(1),
+  type: z.literal("state.snapshot"),
+  payload: PlayerStateSchema,
+})
+
+export const HistoryItemSchema = z.strictObject({
+  id: historyItemId,
+  queueItem: QueueItemSchema,
+  playedAt: timestamp,
+  endedAt: z.nullable(timestamp),
+  endReason: z.nullable(z.enum(["finished", "skipped", "stopped", "errored"])),
+})
+
+export const ApiErrorSchema = z.strictObject({
+  error: z.strictObject({
+    code: z.string().check(z.minLength(1)),
+    message: z.string().check(z.minLength(1)),
+  }),
+})
+
+export const ChannelsSchema = z.strictObject({
+  channels: z.readonly(z.array(z.strictObject({ id: identifier, name: identifier }))),
+})
+
+export const ResultsSchema = z.strictObject({ results: z.readonly(z.array(SearchResultSchema)) })
+export const HistorySchema = z.strictObject({ items: z.readonly(z.array(HistoryItemSchema)) })

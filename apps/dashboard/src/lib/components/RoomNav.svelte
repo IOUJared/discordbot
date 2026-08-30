@@ -1,0 +1,19 @@
+<script lang="ts">
+  import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise"
+  import House from "phosphor-svelte/lib/House"
+  import Lock from "phosphor-svelte/lib/Lock"
+  import Queue from "phosphor-svelte/lib/Queue"
+  import Gear from "phosphor-svelte/lib/Gear"
+  import SignOut from "phosphor-svelte/lib/SignOut"
+  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh"
+  import Badge from "./Badge.svelte"
+  import type { SocketStatus } from "$lib/services/socket.js"
+  let { voiceConnected, socketStatus, view, onchange, logout }: { voiceConnected: boolean; socketStatus: SocketStatus; view: "player"|"history"|"settings"; onchange: (view: "player"|"history"|"settings") => void; logout: () => void } = $props()
+  const badgeStatus = (): "connected"|"reconnecting"|"disconnected" => socketStatus === "connected" ? "connected" : socketStatus === "reconnecting" || socketStatus === "connecting" ? "reconnecting" : "disconnected"
+</script>
+<nav aria-label="Room and controls"><div class="group"><p>Room</p><button class="selected" aria-current="page"><House size={20} weight="fill" aria-hidden="true" /><span>Main Room</span></button><button disabled title="Lounge is unavailable"><SpeakerHigh size={20} aria-hidden="true" /><span>Lounge</span></button><button disabled title="Study is unavailable"><Lock size={20} aria-hidden="true" /><span>Study</span></button><button disabled title="Chill is unavailable"><Lock size={20} aria-hidden="true" /><span>Chill</span></button></div><div class="group"><p>Controls</p><button class:active={view === "player"} onclick={() => onchange("player")}><Queue size={20} aria-hidden="true" /><span>Player</span></button><button class:active={view === "history"} onclick={() => onchange("history")}><ClockCounterClockwise size={20} aria-hidden="true" /><span>History</span></button><button class:active={view === "settings"} onclick={() => onchange("settings")}><Gear size={20} aria-hidden="true" /><span>Settings</span></button></div><div class="status"><p>Status</p><Badge status={badgeStatus()} label={socketStatus === "connected" ? (voiceConnected ? "Voice connected · Main Room" : "Server connected") : socketStatus} /><button onclick={logout}><SignOut size={20} aria-hidden="true" /><span>Log out</span></button></div></nav>
+<style>
+  nav{min-block-size:0;display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:var(--space-5);padding:var(--space-5);background:var(--surface-recessed);border-inline-end:var(--line-width) solid var(--line-subtle);overflow:auto}.group{display:grid;gap:var(--space-1)}.group p,.status>p{padding-inline:var(--space-3);color:var(--text-muted);font-size:var(--type-label);text-transform:uppercase;letter-spacing:var(--tracking-label)}.group button,.status button{min-block-size:var(--target);display:flex;align-items:center;gap:var(--space-3);padding-inline:var(--space-3);border:0;border-radius:var(--radius-control);background:transparent;color:var(--text-secondary);text-align:start}.group button:hover:not(:disabled),.status button:hover{background:var(--surface-hover);color:var(--text-primary)}.group button:disabled{opacity:.7}.group button.active{color:var(--text-primary)}.group button.selected{background:var(--indigo-100);color:var(--text-primary);box-shadow:inset var(--space-1) 0 var(--indigo-500)}.status{align-self:end;display:grid;gap:var(--space-2);padding-block-start:var(--space-5);border-block-start:var(--line-width) solid var(--line-subtle)}
+  @media(min-width:1024px){nav{grid-template-rows:auto auto auto;align-content:start;gap:var(--space-6)}.status{align-self:auto;margin-block-start:var(--space-6)}}
+  @media(min-width:768px) and (max-width:1023px){nav{padding-inline:var(--space-2)}nav span,.group p{position:absolute;inline-size:1px;block-size:1px;overflow:hidden}.group button,.status button{justify-content:center;padding:0}.status :global(.badge){justify-content:center;font-size:0}}
+</style>

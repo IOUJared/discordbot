@@ -1,0 +1,58 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.11/schema.json",
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noConfusingVoidType": "error",
+        "noFallthroughSwitchClause": "error"
+      },
+      "style": {
+        "noDefaultExport": "error",
+        "useImportType": "error",
+        "noNonNullAssertion": "error",
+        "noParameterAssign": "error"
+      },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error"
+      },
+      "complexity": {
+        "noBannedTypes": "error"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "asNeeded"
+    }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/coverage",
+      "!**/*.tsbuildinfo",
+      "!**/test-results",
+      "!.omo/evidence",
+      "!apps/dashboard/**/*.svelte",
+      "!apps/dashboard/**/*.css",
+      "!apps/dashboard/.svelte-kit",
+      "!apps/dashboard/build",
+      "!apps/dashboard/test-results",
+      "!apps/dashboard/vite.config.ts",
+      "!apps/dashboard/playwright.config.ts",
+      "!apps/dashboard/svelte.config.js"
+    ]
+  }
+}

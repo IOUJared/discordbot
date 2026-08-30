@@ -1,0 +1,16 @@
+.git
+.github
+.omo
+node_modules
+**/node_modules
+**/dist
+**/build
+**/.svelte-kit
+**/test-results
+coverage
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+overrides:
+  ws: 8.21.3
+allowBuilds:
+  '@discordjs/opus': set this to true or false
+  better-sqlite3: true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - zod@4.5.4
+  - svelte@5.57.0
+onlyBuiltDependencies:
+  - better-sqlite3

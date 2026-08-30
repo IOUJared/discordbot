@@ -1,0 +1,3 @@
+# Discord Music Remote
+
+A private browser remote for controlling playback, queue order, voice connection, search, and listening history.

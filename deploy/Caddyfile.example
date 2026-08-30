@@ -1,0 +1,10 @@
+music-api.example.com {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3000
+}
+
+# Use this block only when self-hosting the dashboard instead of GitHub Pages.
+music.example.com {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:4173
+}

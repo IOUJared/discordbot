@@ -1,0 +1,300 @@
+import {
+  ChannelIdSchema,
+  DurationMsSchema,
+  GuildIdSchema,
+  type MediaProviderSettings,
+  type Track,
+  TrackIdSchema,
+  UserIdSchema,
+  VolumeSchema,
+} from "@discord-music/contracts"
+import { describe, expect, it } from "vitest"
+
+import type { MusicSource, PlayableMedia, ProviderController } from "../../src/media/types.js"
+import type {
+  AudioResource,
+  AudioResourceFactory,
+  PlaybackCallbacks,
+  PlayerScheduler,
+  SettingsPort,
+  VoiceGateway,
+  VoiceStateEvent,
+} from "../../src/player/ports.js"
+import { PlayerService } from "../../src/player/service.js"
+import { FixedClock } from "../db/fixtures.js"
+
+const guildId = GuildIdSchema.parse("guild-1")
+const channelId = ChannelIdSchema.parse("voice-1")
+const userId = UserIdSchema.parse("owner")
+const playable: PlayableMedia = {
+  url: "https://media.example/audio?token=redacted",
+  headers: {},
+  container: "webm",
+  codec: "opus",
+  seekable: true,
+}
+function track(index: number): Track {
+  return {
+    id: TrackIdSchema.parse(`track-${index}`),
+    provider: "youtube",
+    title: `Track ${index}`,
+    artist: "Artist",
+    url: `https://youtube.example/watch?v=${index}`,
+    durationMs: DurationMsSchema.parse(180_000),
+  }
+}
+const trackOne = track(1)
+const trackTwo = track(2)
+const tracks = [trackOne, trackTwo, track(3)]
+
+class FakeSource implements MusicSource {
+  resolveCount = 0
+  failTrackId: string | null = null
+
+  async search() {
+    return tracks.map((track) => ({ track, score: 1 }))
+  }
+
+  async resolve(track: Track) {
+    this.resolveCount += 1
+    if (track.id === this.failTrackId) throw new RangeError("unplayable fixture")
+    return playable
+  }
+}
+
+class FakeProviders implements ProviderController {
+  private value: MediaProviderSettings = {
+    preference: "youtube_only",
+    mockTidalConnected: false,
+  }
+  settings() {
+    return this.value
+  }
+  setPreference(preference: "mock_tidal_first" | "youtube_only") {
+    this.value = { ...this.value, preference }
+  }
+  connectMockTidal() {
+    this.value = { preference: "mock_tidal_first", mockTidalConnected: true }
+  }
+  disconnectMockTidal() {
+    this.value = { preference: "youtube_only", mockTidalConnected: false }
+  }
+  async close() {}
+}
+
+class FakeVoice implements VoiceGateway {
+  callbacks: PlaybackCallbacks | null = null
+  connected = false
+  pauses = 0
+  resumes = 0
+  stops = 0
+  listener: ((event: VoiceStateEvent) => void) | null = null
+
+  async join() {
+    this.connected = true
+    this.listener?.({ kind: "connected", channelId })
+  }
+  async leave() {
+    this.connected = false
+    this.listener?.({ kind: "disconnected" })
+  }
+  play(_resource: AudioResource, callbacks: PlaybackCallbacks) {
+    this.callbacks = callbacks
+  }
+  pause() {
+    this.pauses += 1
+    return true
+  }
+  resume() {
+    this.resumes += 1
+    return true
+  }
+  stop() {
+    this.stops += 1
+  }
+  setVolume() {}
+  onStatus(listener: (event: VoiceStateEvent) => void) {
+    this.listener = listener
+    return () => {
+      this.listener = null
+    }
+  }
+}
+
+class FakeScheduler implements PlayerScheduler {
+  callback: (() => void) | null = null
+  schedule(callback: () => void) {
+    this.callback = callback
+    return () => {
+      this.callback = null
+    }
+  }
+}
+
+function harness(settings?: SettingsPort) {
+  const clock = new FixedClock(new Date("2026-01-01T00:00:00.000Z"))
+  const source = new FakeSource()
+  const providers = new FakeProviders()
+  const voice = new FakeVoice()
+  const scheduler = new FakeScheduler()
+  let sequence = 0
+  const resources: number[] = []
+  const factory: AudioResourceFactory = {
+    create: async (_media, offsetMs) => {
+      resources.push(offsetMs)
+      return { dispose: () => undefined }
+    },
+  }
+  const service = new PlayerService({
+    guildId,
+    source,
+    providers,
+    voice,
+    resourceFactory: factory,
+    clock,
+    scheduler,
+    nextId: () => `generated-${sequence++}`,
+    random: () => 0,
+    ...(settings === undefined ? {} : { settings }),
+  })
+  return { clock, providers, resources, scheduler, service, source, voice }
+}
+
+describe("PlayerService", () => {
+  it("auto-joins and starts the first play result while preserving distinct request IDs", async () => {
+    // Given
+    const { service } = harness()
+
+    // When
+    await service.play("song", userId, channelId)
+    await service.enqueue(trackOne, userId)
+
+    // Then
+    expect(service.snapshot()).toMatchObject({
+      currentItem: { id: "generated-0" },
+      queue: [{ id: "generated-1" }],
+    })
+  })
+
+  it("tracks pause/resume position and rebuilds a fresh resource on seek/restart", async () => {
+    // Given
+    const { clock, resources, service, source } = harness()
+    await service.join(channelId)
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+    clock.advance(5_000)
+
+    // When
+    service.pause()
+    clock.advance(5_000)
+    service.resume()
+    await service.seek(12_000)
+    await service.restart()
+
+    // Then
+    expect(resources).toEqual([0, 12_000, 0])
+    expect(source.resolveCount).toBe(3)
+    expect(service.snapshot().positionMs).toBe(0)
+  })
+
+  it("applies volume and queue-loop transitions", async () => {
+    // Given
+    const { service, voice } = harness()
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+    service.setLoop("queue")
+
+    // When
+    service.setVolume(VolumeSchema.parse(175))
+    await voice.callbacks?.finished()
+
+    // Then
+    expect(service.snapshot()).toMatchObject({
+      currentItem: { track: { id: "track-1" } },
+      volume: 175,
+      loopMode: "queue",
+    })
+  })
+
+  it("connects the mock TIDAL simulator and persists provider priority", () => {
+    // Given
+    const saved: unknown[] = []
+    const { service } = harness({
+      get: () => ({
+        volume: VolumeSchema.parse(100),
+        loopMode: "off",
+        sourcePreference: "youtube_only",
+        mockTidalConnected: false,
+      }),
+      set: (_guild, settings) => saved.push(settings),
+    })
+
+    // When
+    service.connectMockTidal()
+
+    // Then
+    expect(service.providerSettings()).toEqual({
+      preference: "mock_tidal_first",
+      mockTidalConnected: true,
+    })
+    expect(saved.at(-1)).toMatchObject({
+      sourcePreference: "mock_tidal_first",
+      mockTidalConnected: true,
+    })
+  })
+
+  it("skips a failed track and continues with the next item", async () => {
+    // Given
+    const { service, source } = harness()
+    source.failTrackId = "track-1"
+    await service.enqueue(trackOne, userId)
+    await service.enqueue(trackTwo, userId)
+
+    // When
+    await service.startIfIdle()
+
+    // Then
+    expect(service.snapshot().currentItem?.track.id).toBe("track-2")
+  })
+
+  it("rejects invalid or unsupported seek", async () => {
+    // Given
+    const { service } = harness()
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+
+    // When
+    const seek = service.seek(999_000)
+
+    // Then
+    await expect(seek).rejects.toThrow(RangeError)
+  })
+
+  it("disconnects voice after the idle timer fires", async () => {
+    // Given
+    const { scheduler, service, voice } = harness()
+    await service.join(channelId)
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+
+    // When
+    service.stop()
+    scheduler.callback?.()
+    await Promise.resolve()
+
+    // Then
+    expect(voice.connected).toBe(false)
+  })
+
+  it("clears the published voice channel after a terminal gateway disconnect", async () => {
+    // Given
+    const { service, voice } = harness()
+    await service.join(channelId)
+
+    // When
+    voice.listener?.({ kind: "disconnected" })
+
+    // Then
+    expect(service.voiceStatus()).toMatchObject({ connected: false, channelId: null })
+  })
+})

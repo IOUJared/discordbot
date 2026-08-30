@@ -1,0 +1,23 @@
+[Unit]
+Description=Personal Discord music bot and API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=discord-music
+Group=discord-music
+WorkingDirectory=/opt/discord-music
+EnvironmentFile=/etc/discord-music.env
+ExecStart=/usr/bin/node --enable-source-maps /opt/discord-music/apps/server/dist/main.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/discord-music
+
+[Install]
+WantedBy=multi-user.target

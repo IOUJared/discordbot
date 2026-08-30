@@ -1,0 +1,11 @@
+<script lang="ts">
+  import type { HistoryItem } from "@discord-music/contracts"
+  import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise"
+  import Play from "phosphor-svelte/lib/Play"
+  import Plus from "phosphor-svelte/lib/Plus"
+  let { items, loading, action }: { items: readonly HistoryItem[]; loading: boolean; action: (item: HistoryItem, play: boolean) => void } = $props()
+</script>
+<section class="history" aria-labelledby="history-title"><header><p>Listening log</p><h1 id="history-title">History</h1></header>{#if loading}<p role="status">Loading history…</p>{:else if items.length === 0}<div class="empty"><ClockCounterClockwise size={40} aria-hidden="true" /><strong>No listening history</strong><span>Completed tracks will appear here.</span></div>{:else}<ol>{#each items as item}<li data-testid="history-item" data-history-id={item.id}><div><strong>{item.queueItem.track.title}</strong><span>{item.queueItem.track.artist} · {item.endReason ?? "playing"}</span></div><button onclick={() => action(item,false)} aria-label={`Add ${item.queueItem.track.title} again`}><Plus size={20} aria-hidden="true" /></button><button onclick={() => action(item,true)} aria-label={`Play ${item.queueItem.track.title} again`}><Play size={20} aria-hidden="true" /></button></li>{/each}</ol>{/if}</section>
+<style>
+  .history{min-block-size:0;overflow:auto;padding:var(--space-6);background:var(--surface-primary)}header p{color:var(--text-muted);text-transform:uppercase;font-size:var(--type-label);letter-spacing:var(--tracking-label)}h1{margin-block-end:var(--space-6)}ol{list-style:none;padding:0;margin:0;display:grid}li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:var(--space-2);padding-block:var(--space-3);border-block-end:var(--line-width) solid var(--line-subtle)}li div{min-inline-size:0;display:grid}li strong,li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}li span{color:var(--text-secondary)}button{inline-size:var(--target);block-size:var(--target);display:grid;place-items:center;border:0;background:transparent;color:var(--text-secondary)}button:hover{background:var(--surface-hover);color:var(--text-primary)}.empty{min-block-size:50dvh;display:grid;place-items:center;align-content:center;gap:var(--space-2);color:var(--text-muted)}
+</style>
