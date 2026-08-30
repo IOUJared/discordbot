@@ -54,6 +54,74 @@ describe("YouTube yt-dlp boundary", () => {
 
     // Then
     expect(args.at(-1)).toBe(`ytsearch5:${payload}`)
+    expect(args).toContain("--flat-playlist")
+    expect(args).not.toContain("-f")
+  })
+
+  it("derives YouTube artwork when flat search omits a thumbnail", () => {
+    // Given
+    const output = JSON.stringify({
+      entries: [
+        {
+          id: "video-2",
+          title: "Another Song",
+          uploader: "Another Artist",
+          webpage_url: "https://www.youtube.com/watch?v=video-2",
+          duration: 120,
+        },
+      ],
+    })
+
+    // When
+    const results = parseSearchOutput(output)
+
+    // Then
+    expect(results.at(0)?.track.artworkUrl).toBe("https://i.ytimg.com/vi/video-2/hqdefault.jpg")
+  })
+
+  it("caches normalized repeat searches until the cache entry expires", async () => {
+    // Given
+    let now = 1_000
+    let executions = 0
+    const executor: ProcessExecutor = {
+      async run() {
+        executions += 1
+        return { stdout: fixture, stderr: "" }
+      },
+    }
+    const source = new YouTubeMusicSource(executor, undefined, {
+      now: () => now,
+      searchCacheTtlMs: 30_000,
+    })
+
+    // When
+    await source.search(" Daft Punk ")
+    await source.search("daft punk")
+    now += 30_001
+    await source.search("DAFT PUNK")
+
+    // Then
+    expect(executions).toBe(2)
+  })
+
+  it("evicts the oldest search when the cache reaches capacity", async () => {
+    // Given
+    let executions = 0
+    const executor: ProcessExecutor = {
+      async run() {
+        executions += 1
+        return { stdout: fixture, stderr: "" }
+      },
+    }
+    const source = new YouTubeMusicSource(executor, undefined, { searchCacheCapacity: 1 })
+
+    // When
+    await source.search("first")
+    await source.search("second")
+    await source.search("first")
+
+    // Then
+    expect(executions).toBe(3)
   })
 
   it("parses playable URL headers and seek support", () => {

@@ -45,15 +45,33 @@ const resolvedOutputSchema = z.object({
   protocol: z.enum(["http", "https"]),
 })
 const processTimeoutMs = 20_000
+const defaultSearchCacheTtlMs = 30_000
+const defaultSearchCacheCapacity = 100
+
+type YouTubeMusicSourceOptions = {
+  readonly now?: () => number
+  readonly searchCacheTtlMs?: number
+  readonly searchCacheCapacity?: number
+}
+
+type SearchCacheEntry = {
+  readonly expiresAt: number
+  readonly results: readonly SearchResult[]
+}
 
 export function youtubeSearchArgs(query: string): readonly string[] {
-  return ["--dump-single-json", "--no-playlist", "--no-warnings", `ytsearch5:${query}`]
+  return [
+    "--dump-single-json",
+    "--flat-playlist",
+    "--no-playlist",
+    "--no-warnings",
+    `ytsearch5:${query}`,
+  ]
 }
 
 export function parseSearchOutput(output: string): readonly SearchResult[] {
   const parsed = searchOutputSchema.parse(JSON.parse(output))
   return parsed.entries.map((entry, index) => {
-    const artwork = entry.thumbnail === undefined ? {} : { artworkUrl: entry.thumbnail }
     return {
       track: TrackSchema.parse({
         id: entry.id,
@@ -62,7 +80,8 @@ export function parseSearchOutput(output: string): readonly SearchResult[] {
         artist: entry.uploader,
         url: entry.webpage_url,
         durationMs: DurationMsSchema.parse(Math.round(entry.duration * 1_000)),
-        ...artwork,
+        artworkUrl:
+          entry.thumbnail ?? `https://i.ytimg.com/vi/${encodeURIComponent(entry.id)}/hqdefault.jpg`,
       }),
       score: Math.max(0, 1 - index * 0.1),
     }
@@ -82,12 +101,29 @@ export function parseResolvedOutput(output: string): RemotePlayableMedia {
 }
 
 export class YouTubeMusicSource implements MusicSource {
+  private readonly now: () => number
+  private readonly searchCacheTtlMs: number
+  private readonly searchCacheCapacity: number
+  private readonly searchCache = new Map<string, SearchCacheEntry>()
+
   constructor(
     private readonly executor: ProcessExecutor = nodeProcessExecutor,
     private readonly policy: RemoteMediaPolicy = remoteMediaPolicy,
-  ) {}
+    options: YouTubeMusicSourceOptions = {},
+  ) {
+    this.now = options.now ?? Date.now
+    this.searchCacheTtlMs = options.searchCacheTtlMs ?? defaultSearchCacheTtlMs
+    this.searchCacheCapacity = options.searchCacheCapacity ?? defaultSearchCacheCapacity
+  }
 
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
+    const cacheKey = query.trim().toLocaleLowerCase()
+    const cached = this.searchCache.get(cacheKey)
+    if (cached !== undefined && cached.expiresAt > this.now()) {
+      return cached.results
+    }
+    this.searchCache.delete(cacheKey)
+
     const request = {
       file: "yt-dlp",
       args: youtubeSearchArgs(query),
@@ -95,7 +131,18 @@ export class YouTubeMusicSource implements MusicSource {
       ...(signal === undefined ? {} : { signal }),
     }
     const result = await this.executor.run(request)
-    return parseSearchOutput(result.stdout)
+    const results = parseSearchOutput(result.stdout)
+    if (this.searchCache.size >= this.searchCacheCapacity) {
+      const oldest = this.searchCache.keys().next()
+      if (!oldest.done) {
+        this.searchCache.delete(oldest.value)
+      }
+    }
+    this.searchCache.set(cacheKey, {
+      expiresAt: this.now() + this.searchCacheTtlMs,
+      results,
+    })
+    return results
   }
 
   async resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
