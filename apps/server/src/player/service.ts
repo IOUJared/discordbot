@@ -1,8 +1,6 @@
 import {
   type ChannelId,
   type LoopMode,
-  type MediaProviderSettings,
-  type MediaSourcePreference,
   type PlaybackFailureNotification,
   type PlayerSnapshot,
   PositionMsSchema,
@@ -51,11 +49,6 @@ export class PlayerService extends QueueControls {
     const settings = options.settings?.get(options.guildId)
     this.volume = settings?.volume ?? VolumeSchema.parse(100)
     this.loopMode = settings?.loopMode ?? "off"
-    if (settings !== undefined) {
-      if (settings.mockTidalConnected) this.options.providers.connectMockTidal()
-      else this.options.providers.disconnectMockTidal()
-      this.options.providers.setPreference(settings.sourcePreference)
-    }
   }
 
   async join(channelId: ChannelId): Promise<void> {
@@ -171,25 +164,6 @@ export class PlayerService extends QueueControls {
     this.persistSettings()
   }
 
-  providerSettings(): MediaProviderSettings {
-    return this.options.providers.settings()
-  }
-
-  setSourcePreference(preference: MediaSourcePreference): void {
-    this.options.providers.setPreference(preference)
-    this.persistSettings()
-  }
-
-  connectMockTidal(): void {
-    this.options.providers.connectMockTidal()
-    this.persistSettings()
-  }
-
-  disconnectMockTidal(): void {
-    this.options.providers.disconnectMockTidal()
-    this.persistSettings()
-  }
-
   async playSelected(id: QueueItem["id"]): Promise<void> {
     const selected = this.queue.remove(id)
     if (this.playback.current !== null) {
@@ -274,12 +248,9 @@ export class PlayerService extends QueueControls {
   }
 
   private persistSettings(): void {
-    const providers = this.options.providers.settings()
     this.options.settings?.set(this.options.guildId, {
       volume: this.volume,
       loopMode: this.loopMode,
-      sourcePreference: providers.preference,
-      mockTidalConnected: providers.mockTidalConnected,
     })
   }
 

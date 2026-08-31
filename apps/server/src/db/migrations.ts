@@ -41,14 +41,18 @@ const migrations = [
     `,
   },
   {
-    version: 2,
+    version: 3,
     sql: `
-      ALTER TABLE guild_settings ADD COLUMN source_preference TEXT NOT NULL
-        DEFAULT 'youtube_only'
-        CHECK (source_preference IN ('mock_tidal_first', 'youtube_only'));
-      ALTER TABLE guild_settings ADD COLUMN mock_tidal_connected INTEGER NOT NULL
-        DEFAULT 0
-        CHECK (mock_tidal_connected IN (0, 1));
+      CREATE TABLE guild_settings_next (
+        guild_id TEXT PRIMARY KEY NOT NULL,
+        volume INTEGER NOT NULL CHECK (volume BETWEEN 0 AND 200),
+        loop_mode TEXT NOT NULL CHECK (loop_mode IN ('off', 'track', 'queue')),
+        updated_at_ms INTEGER NOT NULL
+      );
+      INSERT INTO guild_settings_next (guild_id, volume, loop_mode, updated_at_ms)
+        SELECT guild_id, volume, loop_mode, updated_at_ms FROM guild_settings;
+      DROP TABLE guild_settings;
+      ALTER TABLE guild_settings_next RENAME TO guild_settings;
     `,
   },
 ] as const

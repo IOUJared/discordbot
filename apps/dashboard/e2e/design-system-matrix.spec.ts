@@ -8,7 +8,6 @@ const primitives = [
   "range-control",
   "queue",
   "connection-badge",
-  "playback-source-settings",
   "toast-stack",
 ] as const
 

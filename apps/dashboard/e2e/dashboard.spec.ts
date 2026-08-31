@@ -33,6 +33,7 @@ test("Given disconnected desktop voice When channels load Then each real channel
   await expect(lounge).toBeEnabled()
   expect((await mainRoom.boundingBox())?.width).toBeGreaterThanOrEqual(160)
   await expect(page.getByRole("button", { name: /Study|Chill/ })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Settings", exact: true })).toHaveCount(0)
 })
 
 test("Given real Discord voice channels When one is clicked Then the bot connects to that channel", async ({
@@ -218,7 +219,7 @@ for (const width of [375, 768, 1280]) {
     await expect(page).toHaveURL(/\/design-system\/$/)
     await expect(page.locator(".boot")).toHaveCount(0)
     await expect(page.getByRole("heading", { name: "Primitive showcase" })).toBeVisible()
-    await expect(page.locator("[data-matrix-cell]")).toHaveCount(72)
+    await expect(page.locator("[data-matrix-cell]")).toHaveCount(64)
     await page.waitForFunction(() => {
       const artwork = document.querySelector<HTMLImageElement>("[data-primitive='now-playing'] img")
       return artwork?.complete === true && artwork.naturalWidth > 0
@@ -724,72 +725,6 @@ for (const width of [375, 768, 1920]) {
     await page.screenshot({
       path: `../../.omo/evidence/search-more/final-expanded-${width}.png`,
     })
-  })
-}
-
-test("Given provider settings When the simulator is connected Then priority can be changed without credentials", async ({
-  page,
-}) => {
-  let preferenceRequest: unknown = null
-  await mockWire(page)
-  await page.unroute("**/api/providers/preference")
-  await page.route("**/api/providers/preference", async (route) => {
-    preferenceRequest = route.request().postDataJSON()
-    await route.fulfill({
-      json: {
-        ...room,
-        version: 9,
-        providers: { preference: "youtube_only", mockTidalConnected: true },
-      },
-    })
-  })
-  await page.goto("/#code=one-time")
-  await page.getByRole("button", { name: "Settings" }).click()
-  await expect(page.getByTestId("provider-settings")).toContainText("Local classroom simulator")
-  await expect(page.getByTestId("provider-settings")).toContainText("does not use a TIDAL account")
-  await page.getByRole("button", { name: "Connect simulator" }).click()
-  await expect(page.getByText("Simulator connected")).toBeVisible()
-  await page.getByLabel("YouTube only").check()
-  expect(preferenceRequest).toEqual({ preference: "youtube_only" })
-  await expect(page.getByLabel("YouTube only")).toBeChecked()
-  await page.getByRole("button", { name: "Disconnect simulator" }).click()
-  await expect(page.getByText("Simulator off · YouTube active")).toBeVisible()
-})
-
-test("Given a mobile listener When settings opens Then the same header action returns to the player", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 375, height: 900 })
-  await mockWire(page)
-  await page.goto("/#code=one-time")
-  await page.getByRole("button", { name: "Open settings" }).click()
-  await expect(page.getByRole("heading", { name: "Source priority" })).toBeVisible()
-  await page.getByRole("button", { name: "Return to player" }).click()
-  await expect(page.getByTestId("current-track")).toBeVisible()
-})
-
-for (const width of [375, 768, 1280]) {
-  test(`Given mock TIDAL settings at ${width}px When connection changes Then both visual states remain usable`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 900 })
-    await page.emulateMedia({ reducedMotion: "reduce" })
-    await mockWire(page)
-    await page.goto("/#code=one-time")
-    if (width < 768) await page.getByRole("button", { name: "Open settings" }).click()
-    else await page.getByRole("button", { name: "Settings" }).click()
-    await expect(page.getByRole("heading", { name: "Source priority" })).toBeVisible()
-    await page.screenshot({
-      path: `../../.omo/evidence/mock-tidal/settings-${width}-disconnected.png`,
-      fullPage: true,
-    })
-    await page.getByRole("button", { name: "Connect simulator" }).click()
-    await expect(page.getByText("Simulator connected")).toBeVisible()
-    await page.screenshot({
-      path: `../../.omo/evidence/mock-tidal/settings-${width}-connected.png`,
-      fullPage: true,
-    })
-    expect(await page.locator("body").evaluate((body) => body.scrollWidth)).toBe(width)
   })
 }
 

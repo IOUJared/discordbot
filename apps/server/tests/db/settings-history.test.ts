@@ -36,8 +36,6 @@ describe("guild settings and history persistence", () => {
     expect(settings).toEqual({
       volume: 100,
       loopMode: "off",
-      sourcePreference: "youtube_only",
-      mockTidalConnected: false,
     })
     persistence.close()
   })
@@ -54,8 +52,6 @@ describe("guild settings and history persistence", () => {
     first.settings.set(GUILD_ID, {
       volume: VolumeSchema.parse(175),
       loopMode: "queue",
-      sourcePreference: "mock_tidal_first",
-      mockTidalConnected: true,
     })
     first.close()
 
@@ -66,8 +62,6 @@ describe("guild settings and history persistence", () => {
     expect(reopened.settings.get(GUILD_ID)).toEqual({
       volume: 175,
       loopMode: "queue",
-      sourcePreference: "mock_tidal_first",
-      mockTidalConnected: true,
     })
     reopened.close()
   })

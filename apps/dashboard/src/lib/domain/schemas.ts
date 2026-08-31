@@ -20,7 +20,7 @@ export const SessionSchema = z.strictObject({
 
 export const TrackSchema = z.strictObject({
   id: trackId,
-  provider: z.enum(["youtube", "mock_tidal"]),
+  provider: z.literal("youtube"),
   title: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   artist: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   url: z.url(),
@@ -64,10 +64,6 @@ export const PlayerStateSchema = z.strictObject({
   version: z.int().check(z.nonnegative()),
   player: playerSchema,
   voice: voiceSchema,
-  providers: z.strictObject({
-    preference: z.enum(["mock_tidal_first", "youtube_only"]),
-    mockTidalConnected: z.boolean(),
-  }),
 })
 export const PlaylistImportResultSchema = z.strictObject({
   state: PlayerStateSchema,
@@ -87,7 +83,7 @@ export const PlaybackFailureMessageSchema = z.strictObject({
     guildId,
     queueItemId,
     trackId,
-    provider: z.enum(["youtube", "mock_tidal"]),
+    provider: z.literal("youtube"),
     title: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
     artist: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
     message: z.literal("Playback failed; skipped to the next track."),

@@ -48,7 +48,6 @@ export const room = {
     muted: false,
     deafened: false,
   },
-  providers: { preference: "youtube_only" as const, mockTidalConnected: false },
 }
 
 export const emptyRoom = {
@@ -70,7 +69,7 @@ export type WireOptions = {
       readonly guildId: string
       readonly queueItemId: string
       readonly trackId: string
-      readonly provider: "youtube" | "mock_tidal"
+      readonly provider: "youtube"
       readonly title: string
       readonly artist: string
       readonly message: "Playback failed; skipped to the next track."
@@ -127,38 +126,6 @@ export async function mockWire(page: Page, options: WireOptions = {}): Promise<v
     }),
   )
   await page.route("**/api/history", async (route) => route.fulfill({ json: { items: history } }))
-  await page.route("**/api/providers/mock-tidal/connect", async (route) =>
-    route.fulfill({
-      json: {
-        ...state,
-        version: state.version + 1,
-        providers: { preference: "mock_tidal_first", mockTidalConnected: true },
-      },
-    }),
-  )
-  await page.route("**/api/providers/mock-tidal/disconnect", async (route) =>
-    route.fulfill({
-      json: {
-        ...state,
-        version: state.version + 1,
-        providers: { preference: "youtube_only", mockTidalConnected: false },
-      },
-    }),
-  )
-  await page.route("**/api/providers/preference", async (route) => {
-    const body: unknown = route.request().postDataJSON()
-    const preference =
-      typeof body === "object" && body !== null && "preference" in body
-        ? body.preference
-        : "youtube_only"
-    await route.fulfill({
-      json: {
-        ...state,
-        version: state.version + 1,
-        providers: { preference, mockTidalConnected: true },
-      },
-    })
-  })
   await page.route("**/api/search", async (route) => {
     if (options.searchError) {
       await route.fulfill({

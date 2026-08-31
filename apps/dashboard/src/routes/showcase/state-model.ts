@@ -19,7 +19,6 @@ export const primitiveIds = [
   "range-control",
   "queue",
   "connection-badge",
-  "playback-source-settings",
   "toast-stack",
 ] as const
 
@@ -33,7 +32,6 @@ export const primitiveNames: Record<PrimitiveId, string> = {
   "range-control": "Seek / volume range control",
   queue: "Queue list and sheet / drawer",
   "connection-badge": "Connection badge",
-  "playback-source-settings": "Playback source settings",
   "toast-stack": "Toast stack",
 }
 

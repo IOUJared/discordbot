@@ -1,8 +1,7 @@
 import { z } from "zod"
 
-export const TRACK_PROVIDERS = ["youtube", "mock_tidal"] as const
+export const TRACK_PROVIDERS = ["youtube"] as const
 export const LOOP_MODES = ["off", "track", "queue"] as const
-export const MEDIA_SOURCE_PREFERENCES = ["mock_tidal_first", "youtube_only"] as const
 export const HISTORY_END_REASONS = ["finished", "skipped", "stopped", "errored"] as const
 
 const boundedIdentifier = z.string().trim().min(1).max(256)
@@ -34,24 +33,17 @@ export type Timestamp = z.infer<typeof TimestampSchema>
 
 export const TrackProviderSchema = z.enum(TRACK_PROVIDERS)
 export const LoopModeSchema = z.enum(LOOP_MODES)
-export const MediaSourcePreferenceSchema = z.enum(MEDIA_SOURCE_PREFERENCES)
 export const HistoryEndReasonSchema = z.enum(HISTORY_END_REASONS)
 
 export type TrackProvider = z.infer<typeof TrackProviderSchema>
 export type LoopMode = z.infer<typeof LoopModeSchema>
-export type MediaSourcePreference = z.infer<typeof MediaSourcePreferenceSchema>
 export type HistoryEndReason = z.infer<typeof HistoryEndReasonSchema>
 
 const canonicalYouTubeUrl = z
   .url()
   .regex(/^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{1,128}$/u)
-const mockTidalUrl = z
-  .url()
-  .regex(/^https:\/\/mock\.tidal\.invalid\/tracks\/[a-z0-9]+(?:-[a-z0-9]+)*$/u)
-
-export const TrackSchema = z.discriminatedUnion("provider", [
-  z
-    .object({
+export const TrackSchema = z
+  .object({
       id: TrackIdSchema,
       provider: z.literal("youtube"),
       title: z.string().trim().min(1).max(512),
@@ -60,19 +52,7 @@ export const TrackSchema = z.discriminatedUnion("provider", [
       durationMs: DurationMsSchema,
       artworkUrl: z.string().url().optional(),
     })
-    .strict(),
-  z
-    .object({
-      id: TrackIdSchema,
-      provider: z.literal("mock_tidal"),
-      title: z.string().trim().min(1).max(512),
-      artist: z.string().trim().min(1).max(512),
-      url: mockTidalUrl,
-      durationMs: DurationMsSchema,
-      artworkUrl: z.string().url().optional(),
-    })
-    .strict(),
-])
+  .strict()
 
 export type Track = Readonly<z.infer<typeof TrackSchema>>
 
@@ -107,15 +87,6 @@ export const YouTubePlaylistSchema = z
   .strict()
 
 export type YouTubePlaylist = Readonly<z.infer<typeof YouTubePlaylistSchema>>
-
-export const MediaProviderSettingsSchema = z
-  .object({
-    preference: MediaSourcePreferenceSchema,
-    mockTidalConnected: z.boolean(),
-  })
-  .strict()
-
-export type MediaProviderSettings = Readonly<z.infer<typeof MediaProviderSettingsSchema>>
 
 export const PlayerSnapshotSchema = z
   .object({
@@ -274,7 +245,6 @@ export const PlayerStateSchema = z
     version: z.number().int().nonnegative(),
     player: PlayerSnapshotSchema,
     voice: VoiceStatusSchema,
-    providers: MediaProviderSettingsSchema,
   })
   .strict()
 

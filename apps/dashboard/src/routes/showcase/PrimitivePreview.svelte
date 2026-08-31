@@ -2,7 +2,6 @@
   import AppShellHarness from "./AppShellHarness.svelte"
   import BadgeHarness from "./BadgeHarness.svelte"
   import NowPlayingHarness from "./NowPlayingHarness.svelte"
-  import ProviderHarness from "./ProviderHarness.svelte"
   import QueueHarness from "./QueueHarness.svelte"
   import RangeHarness from "./RangeHarness.svelte"
   import RoomNavHarness from "./RoomNavHarness.svelte"
@@ -28,8 +27,6 @@
     <QueueHarness {state} />
   {:else if primitive === "connection-badge"}
     <BadgeHarness {state} />
-  {:else if primitive === "playback-source-settings"}
-    <ProviderHarness {state} />
   {:else}
     <ToastHarness {state} />
   {/if}

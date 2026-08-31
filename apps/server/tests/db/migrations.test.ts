@@ -48,6 +48,47 @@ it("applies migrations idempotently when reopening a stale database", async () =
   expect(unrelated).toBe("kept")
 })
 
+it("removes retired settings columns while preserving saved playback settings", async () => {
+  // Given
+  const directory = await mkdtemp(join(tmpdir(), "discord-music-provider-migration-"))
+  directories.push(directory)
+  const path = join(directory, "server.sqlite")
+  const legacy = new Database(path)
+  legacy.exec(`
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY NOT NULL,
+      applied_at_ms INTEGER NOT NULL
+    );
+    INSERT INTO schema_migrations VALUES (1, 1), (2, 1);
+    CREATE TABLE guild_settings (
+      guild_id TEXT PRIMARY KEY NOT NULL,
+      volume INTEGER NOT NULL,
+      loop_mode TEXT NOT NULL,
+      retired_mode TEXT NOT NULL,
+      retired_connected INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    INSERT INTO guild_settings VALUES ('guild-1', 175, 'queue', 'retired', 1, 1);
+  `)
+  legacy.close()
+
+  // When
+  openDatabase(path).close()
+  const migrated = new Database(path, { readonly: true })
+  const columns = z
+    .array(z.object({ name: z.string() }))
+    .parse(migrated.prepare("PRAGMA table_info(guild_settings)").all())
+    .map((column) => column.name)
+  const settings = z
+    .object({ volume: z.number().int(), loop_mode: z.string() })
+    .parse(migrated.prepare("SELECT volume, loop_mode FROM guild_settings").get())
+  migrated.close()
+
+  // Then
+  expect(columns).toEqual(["guild_id", "volume", "loop_mode", "updated_at_ms"])
+  expect(settings).toEqual({ volume: 175, loop_mode: "queue" })
+})
+
 it("opens SQLite with WAL, foreign keys, and a bounded busy timeout", async () => {
   // Given
   const directory = await mkdtemp(join(tmpdir(), "discord-music-pragmas-"))

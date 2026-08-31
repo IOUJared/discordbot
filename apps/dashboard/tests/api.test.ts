@@ -27,7 +27,6 @@ const state = PlayerStateSchema.parse({
     muted: false,
     deafened: false,
   },
-  providers: { preference: "youtube_only", mockTidalConnected: false },
 })
 const track = TrackSchema.parse({
   id: "track-1",
@@ -141,15 +140,4 @@ describe("dashboard API wire contract", () => {
     ])
   })
 
-  it("Given provider settings When changed Then the protected provider routes receive typed mutations", async () => {
-    const recorder = createRecorder()
-    await recorder.api.connectMockTidal()
-    await recorder.api.sourcePreference("youtube_only")
-    await recorder.api.disconnectMockTidal()
-    expect(recorder.requests.map(({ method, body }) => ({ method, body }))).toEqual([
-      { method: "POST", body: null },
-      { method: "PATCH", body: { preference: "youtube_only" } },
-      { method: "POST", body: null },
-    ])
-  })
 })

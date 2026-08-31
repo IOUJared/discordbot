@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  MediaProviderSettingsSchema,
-  MediaSourcePreferenceSchema,
   PlaybackFailureMessageSchema,
   PlayerSnapshotSchema,
   SetVolumeRequestSchema,
@@ -124,22 +122,12 @@ describe("contracts", () => {
     })
     const volumeResult = SetVolumeRequestSchema.safeParse(invalidVolume)
     const messageResult = WebSocketMessageSchema.safeParse({ version: 1, type: "unknown.event" })
-    const preferenceResult = MediaSourcePreferenceSchema.safeParse("tidal_real")
-    const providerSettings = MediaProviderSettingsSchema.parse({
-      preference: "mock_tidal_first",
-      mockTidalConnected: true,
-    })
 
     // Then: malformed identifiers, negative durations, excessive volume, and unknown messages fail.
     expect(identifierResult.success).toBe(false)
     expect(durationResult.success).toBe(false)
     expect(volumeResult.success).toBe(false)
     expect(messageResult.success).toBe(false)
-    expect(preferenceResult.success).toBe(false)
-    expect(providerSettings).toEqual({
-      preference: "mock_tidal_first",
-      mockTidalConnected: true,
-    })
   })
 
   it("keeps duplicate tracks distinct through queue item identity", () => {

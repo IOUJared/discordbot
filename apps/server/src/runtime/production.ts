@@ -21,8 +21,6 @@ import { wireDiscordPresence } from "../discord/presence-publisher.js"
 import { DiscordAudioResourceFactory } from "../discord/resource-factory.js"
 import { DiscordVoiceGateway } from "../discord/voice-gateway.js"
 import { systemClock } from "../domain/clock.js"
-import { MockTidalMusicSource } from "../media/mock-tidal.js"
-import { PrioritizedMusicSource } from "../media/prioritized-source.js"
 import { YouTubeMusicSource } from "../media/youtube.js"
 import type { PlaybackFailureLog } from "../player/playback-failure.js"
 import { systemScheduler } from "../player/ports.js"
@@ -58,18 +56,13 @@ export async function runProduction(
     clock: systemClock,
     random: secureRandom,
   })
-  const settings = persistence.settings.get(guildId)
-  const youtube = new YouTubeMusicSource(
+  const source = new YouTubeMusicSource(
     undefined,
     undefined,
     config.youtubeCookiesPath === undefined
       ? {}
       : { youtubeCookiesPath: config.youtubeCookiesPath },
   )
-  const source = new PrioritizedMusicSource(new MockTidalMusicSource(), youtube, {
-    preference: settings.sourcePreference,
-    mockTidalConnected: settings.mockTidalConnected,
-  })
   const voice = new DiscordVoiceGateway({
     adapterForGuild: () => requireGuild(client, guildId).voiceAdapterCreator,
   })
@@ -77,7 +70,6 @@ export async function runProduction(
   const player = new PlayerService({
     guildId,
     source,
-    providers: source,
     voice,
     resourceFactory: new DiscordAudioResourceFactory(),
     clock: systemClock,
@@ -138,12 +130,10 @@ export async function runProduction(
       player,
       discord: client,
       database: persistence,
-      media: source,
     })
   } catch (error) {
     await player.leave()
     await app.close()
-    await source.close()
     persistence.close()
     client.destroy()
     throw error

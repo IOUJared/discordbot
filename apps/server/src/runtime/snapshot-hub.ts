@@ -27,7 +27,6 @@ export class SnapshotHub {
       version: this.version,
       player: this.player.snapshot(),
       voice: this.player.voiceStatus(),
-      providers: this.player.providerSettings(),
     }
   }
 

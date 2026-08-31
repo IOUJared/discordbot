@@ -1,7 +1,6 @@
 import type {
   HistoryItem,
   LoopMode,
-  MediaSourcePreference,
   PlayerState,
   QueueItemId,
   SearchResult,
@@ -127,10 +126,6 @@ export function createApi(
     seek: (positionMs: number) => stateMutation("api/player/seek", { positionMs }),
     join: (channelId: string) => stateMutation("api/voice/join", { channelId }),
     leave: () => stateMutation("api/voice/leave"),
-    sourcePreference: (preference: MediaSourcePreference) =>
-      json(client.patch("api/providers/preference", { json: { preference } }), PlayerStateSchema),
-    connectMockTidal: () => stateMutation("api/providers/mock-tidal/connect"),
-    disconnectMockTidal: () => stateMutation("api/providers/mock-tidal/disconnect"),
   }
 }
 

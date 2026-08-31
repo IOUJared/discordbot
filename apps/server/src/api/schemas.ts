@@ -1,7 +1,6 @@
 import {
   ChannelIdSchema,
   LoopModeSchema,
-  MediaSourcePreferenceSchema,
   QueueItemIdSchema,
   TrackSchema,
   VolumeSchema,
@@ -40,7 +39,6 @@ export const seekSchema = z.object({ positionMs: z.number().int().nonnegative() 
 export const volumeSchema = z.object({ volume: VolumeSchema }).strict()
 export const loopSchema = z.object({ loopMode: LoopModeSchema }).strict()
 export const joinSchema = z.object({ channelId: ChannelIdSchema }).strict()
-export const sourcePreferenceSchema = z.object({ preference: MediaSourcePreferenceSchema }).strict()
 export const oauthCallbackSchema = z
   .object({ code: z.string().min(1).max(2048), state: z.string().min(1).max(2048) })
   .strict()

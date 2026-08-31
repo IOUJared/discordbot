@@ -191,14 +191,6 @@ Build a non-product `/design-system` showcase first. At 375px, 768px, and 1280px
 - **States:** default connected, hover if details trigger, focus-visible, disabled unavailable details, loading reconnecting, empty no configured room, error disconnected. Active does not apply and is labelled so in the showcase.
 - **Accessibility / motion:** status is announced through a polite live region only when it changes. Adapt beui `animated-badge`: one short opacity/icon swap; reduced motion uses an immediate text update, never a pulsing dot.
 
-### Playback source settings
-
-- **Structure:** `section > heading/explanation + status + fieldset(priority) + connection action`.
-- **Variants:** Mock TIDAL simulator connected or disconnected; “Mock TIDAL first, then YouTube” or “YouTube only”. This surface never requests an API key, password, OAuth token, or real TIDAL account.
-- **States:** connected status names the local 48 kHz lossless WAV simulator; disconnected status explains that search uses YouTube. Pending mutations disable the affected controls, failures remain adjacent to the action, and successful changes are announced politely.
-- **Visual language:** existing raised/recessed surfaces, indigo selection, compact labels, and native radio controls. No TIDAL logo, copied brand treatment, or color token is introduced; the word “Mock” remains visible wherever the source is identified.
-- **Accessibility:** native `fieldset`/`legend`, 44px labelled rows, visible focus, keyboard selection, and live connection text. Mobile reaches settings from the header and returns to the player using the same toggle control.
-
 ### Toast stack
 
 - **Structure:** polite live region containing individually dismissible status notifications.

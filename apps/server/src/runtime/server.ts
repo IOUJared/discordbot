@@ -7,7 +7,6 @@ export type RuntimeResources = {
   readonly player: { leave(): Promise<void> }
   readonly discord: { destroy(): void }
   readonly database: { close(): void }
-  readonly media: { close(): Promise<void> }
 }
 
 export async function startServer(
@@ -21,7 +20,6 @@ export async function startServer(
       : [
           { close: () => resources.player.leave() },
           { close: () => app.close() },
-          { close: () => resources.media.close() },
           { close: () => resources.database.close() },
           { close: () => resources.discord.destroy() },
         ]

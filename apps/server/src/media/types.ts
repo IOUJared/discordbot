@@ -1,7 +1,5 @@
 import type {
   BitrateKbps,
-  MediaProviderSettings,
-  MediaSourcePreference,
   SearchResult,
   Track,
   YouTubePlaylist,
@@ -30,14 +28,6 @@ export interface MusicSource {
 
 export interface PlaylistSource {
   playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist>
-}
-
-export interface ProviderController {
-  settings(): MediaProviderSettings
-  setPreference(preference: MediaSourcePreference): void
-  connectMockTidal(): void
-  disconnectMockTidal(): void
-  close(): Promise<void>
 }
 
 export type ProcessRequest = {

@@ -1,4 +1,3 @@
-import type { MediaProviderSettings } from "@discord-music/contracts"
 import { PlayerSnapshotSchema, QueueItemSchema } from "@discord-music/contracts"
 
 const artworkUrl = "https://showcase.invalid/artwork-mountain.png"
@@ -40,13 +39,3 @@ export const emptyPlayer = PlayerSnapshotSchema.parse({
   isPaused: true,
   loopMode: "off",
 })
-
-export const connectedSettings: MediaProviderSettings = {
-  preference: "mock_tidal_first",
-  mockTidalConnected: true,
-}
-
-export const disconnectedSettings: MediaProviderSettings = {
-  preference: "youtube_only",
-  mockTidalConnected: false,
-}

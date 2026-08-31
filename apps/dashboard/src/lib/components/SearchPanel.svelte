@@ -33,8 +33,6 @@
   let visibleCount = $state(3)
   const visibleResults = $derived(results.slice(0, visibleCount))
 
-  const providerLabel = (provider: SearchResult["track"]["provider"]): string =>
-    provider === "mock_tidal" ? "Mock TIDAL" : "YouTube"
   const duration = (durationMs: number): string =>
     `${Math.floor(durationMs / 60_000)}:${Math.floor((durationMs % 60_000) / 1_000)
       .toString()
@@ -132,7 +130,7 @@
             <span class="artist" title={result.track.artist}>{result.track.artist}</span>
             <div class="metadata">
               <span>{duration(result.track.durationMs)}</span>
-              <span>{providerLabel(result.track.provider)}</span>
+              <span>YouTube</span>
             </div>
           </div>
           <div class="result-actions">

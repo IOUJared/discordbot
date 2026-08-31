@@ -1,8 +1,6 @@
 import type {
   ChannelId,
   LoopMode,
-  MediaProviderSettings,
-  MediaSourcePreference,
   PlaybackFailureNotification,
   PlayerSnapshot,
   QueueItem,
@@ -41,10 +39,6 @@ export interface PlayerApi {
   shuffle(): void
   join(channelId: ChannelId): Promise<void>
   leave(): Promise<void>
-  providerSettings(): MediaProviderSettings
-  setSourcePreference(preference: MediaSourcePreference): void
-  connectMockTidal(): void
-  disconnectMockTidal(): void
 }
 
 export interface SearchApi {

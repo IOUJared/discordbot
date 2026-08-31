@@ -3,7 +3,6 @@ import type {
   GuildId,
   HistoryItem,
   LoopMode,
-  MediaSourcePreference,
   Volume,
 } from "@discord-music/contracts"
 
@@ -44,8 +43,6 @@ export interface PlayerScheduler {
 export type StoredSettings = {
   readonly volume: Volume
   readonly loopMode: LoopMode
-  readonly sourcePreference: MediaSourcePreference
-  readonly mockTidalConnected: boolean
 }
 
 export interface SettingsPort {

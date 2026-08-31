@@ -7,8 +7,7 @@ container.
 
 Only `DISCORD_OWNER_ID` and users listed in `AUTHORIZED_USERS` can use slash commands or complete
 dashboard login, and OAuth also verifies membership in `DISCORD_GUILD_ID`. Sessions, guild
-volume, loop mode, playback-source preference, mock-provider connection state, and the latest 200
-history items persist. A restart intentionally clears the
+volume, loop mode, and the latest 200 history items persist. A restart intentionally clears the
 current track, queue, and voice connection.
 
 ## Architecture
@@ -18,7 +17,7 @@ flowchart LR
   Discord[Discord users and voice] <--> Server[Bot + Fastify API]
   Dashboard[GitHub Pages dashboard] <-->|HTTPS / WebSocket| Server
   Server <--> SQLite[(SQLite settings and history)]
-  Server --> Media[Mock TIDAL fixtures or yt-dlp + FFmpeg]
+  Server --> Media[yt-dlp + FFmpeg]
 ```
 
 - **Bot and player:** accepts authorized slash commands, maintains one guild queue, and owns the
@@ -27,8 +26,8 @@ flowchart LR
   snapshots over WebSocket.
 - **Dashboard:** is a static SvelteKit client; it holds only a short-lived browser session and
   never receives Discord secrets.
-- **SQLite and media adapters:** persist settings/history while keeping source selection and local
-  Mock TIDAL fixtures separate from YouTube extraction.
+- **SQLite and media adapters:** persist settings and history while keeping YouTube extraction
+  isolated from playback orchestration.
 
 ## Requirements
 
@@ -48,20 +47,6 @@ Optional authenticated YouTube playback accepts a Netscape-format cookie file th
 `YOUTUBE_COOKIES_PATH=/run/secrets/discord-music/youtube.cookies.txt` in `.env`, and keep the file
 owner-only and outside Git. `yt-dlp` must be able to update the file when YouTube refreshes account
 cookies. The cookie file grants account access and must be protected like a password.
-
-## Mock TIDAL simulator
-
-The dashboard Settings view includes a classroom-safe **Mock TIDAL** provider. Connecting it
-prioritizes a small deterministic local catalog and generates private temporary 48 kHz stereo WAV
-files for lossless playback. If a search does not match that catalog, the server automatically
-falls back to the existing YouTube/`yt-dlp` provider. Select **YouTube only** to bypass the mock
-catalog.
-
-This is intentionally not a TIDAL API integration: it sends no TIDAL requests, accepts no TIDAL
-credentials, performs no DRM handling, and does not represent access to a subscriber catalog.
-Temporary WAV files are created with owner-only permissions and removed during graceful shutdown.
-Try the built-in titles `Midnight Circuit`, `Glass Horizon`, or `Indigo Static` after connecting
-the simulator.
 
 ## Discord application setup
 
@@ -244,10 +229,6 @@ service user. Fix `PATH` or install the missing package, then restart.
 **YouTube search or playback suddenly fails.** Run `yt-dlp -U` for a standalone installation or
 rebuild the container with `docker compose build --pull server`. Confirm the URL directly with
 `yt-dlp --dump-single-json --no-playlist URL`. Never paste signed media URLs or cookies into logs.
-
-**A Mock TIDAL search returned YouTube results.** Confirm Settings shows **Simulator connected**
-and **Mock TIDAL first**. Only the three documented classroom fixtures match locally; every other
-query intentionally falls back to YouTube.
 
 **Discord commands do not appear.** Confirm the application ID and guild ID, then run
 `pnpm register:commands` again. Verify the bot was installed with `applications.commands`.

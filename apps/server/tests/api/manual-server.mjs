@@ -11,8 +11,6 @@ let volume = 100
 let paused = false
 let revoked = false
 let exchangeAvailable = true
-let sourcePreference = "youtube_only"
-let mockTidalConnected = false
 const queue = []
 
 function publish() {
@@ -104,21 +102,6 @@ const player = {
   },
   leave: async () => {
     connected = false
-    publish()
-  },
-  providerSettings: () => ({ preference: sourcePreference, mockTidalConnected }),
-  setSourcePreference: (preference) => {
-    sourcePreference = preference
-    publish()
-  },
-  connectMockTidal: () => {
-    sourcePreference = "mock_tidal_first"
-    mockTidalConnected = true
-    publish()
-  },
-  disconnectMockTidal: () => {
-    sourcePreference = "youtube_only"
-    mockTidalConnected = false
     publish()
   },
 }

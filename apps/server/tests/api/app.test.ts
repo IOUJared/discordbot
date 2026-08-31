@@ -1,7 +1,6 @@
 import {
   ChannelIdSchema,
   GuildIdSchema,
-  type MediaProviderSettings,
   type PlaybackFailureNotification,
   PositionMsSchema,
   QueueItemSchema,
@@ -40,7 +39,6 @@ class FakePlayer implements PlayerApi {
   private readonly listeners = new Set<() => void>()
   private readonly failureListeners = new Set<(notification: PlaybackFailureNotification) => void>()
   connected = false
-  providers: MediaProviderSettings = { preference: "youtube_only", mockTidalConnected: false }
   snapshot() {
     return {
       guildId,
@@ -143,21 +141,6 @@ class FakePlayer implements PlayerApi {
   async leave() {
     this.calls.push("leave")
     this.connected = false
-  }
-  providerSettings() {
-    return this.providers
-  }
-  setSourcePreference(preference: "mock_tidal_first" | "youtube_only") {
-    this.calls.push("provider-preference")
-    this.providers = { ...this.providers, preference }
-  }
-  connectMockTidal() {
-    this.calls.push("mock-tidal-connect")
-    this.providers = { preference: "mock_tidal_first", mockTidalConnected: true }
-  }
-  disconnectMockTidal() {
-    this.calls.push("mock-tidal-disconnect")
-    this.providers = { preference: "youtube_only", mockTidalConnected: false }
   }
 }
 
@@ -324,9 +307,6 @@ describe("Fastify API", () => {
       ["POST", "/api/player/shuffle"],
       ["POST", "/api/voice/join"],
       ["POST", "/api/voice/leave"],
-      ["PATCH", "/api/providers/preference"],
-      ["POST", "/api/providers/mock-tidal/connect"],
-      ["POST", "/api/providers/mock-tidal/disconnect"],
       ["DELETE", "/api/queue"],
       ["GET", "/auth/me"],
       ["POST", "/auth/logout"],
@@ -476,33 +456,6 @@ describe("Fastify API", () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ results: [] })
-  })
-
-  it("Given an authorized owner When connecting the simulator Then mock TIDAL becomes first priority", async () => {
-    const { app, player } = await fixture()
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/providers/mock-tidal/connect",
-      headers: { authorization: "Bearer valid" },
-    })
-    expect(response.statusCode).toBe(200)
-    expect(response.json().providers).toEqual({
-      preference: "mock_tidal_first",
-      mockTidalConnected: true,
-    })
-    expect(player.calls).toEqual(["mock-tidal-connect"])
-  })
-
-  it("Given an invalid source preference When posted Then validation rejects it", async () => {
-    const { app, player } = await fixture()
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/api/providers/preference",
-      headers: { authorization: "Bearer valid" },
-      payload: { preference: "real_tidal" },
-    })
-    expect(response.statusCode).toBe(400)
-    expect(player.calls).toEqual([])
   })
 
   it("Given Discord OAuth starts When it creates a redirect Then it uses the documented callback path", async () => {

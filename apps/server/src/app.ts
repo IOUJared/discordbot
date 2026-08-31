@@ -7,7 +7,6 @@ import { z } from "zod"
 
 import { ApiError, errorBody, StaleVersionError, staleVersionBody } from "./api/errors.js"
 import { registerPlayerRoutes } from "./api/player-routes.js"
-import { registerProviderRoutes } from "./api/provider-routes.js"
 import { registerQueueRoutes } from "./api/queue-routes.js"
 import { registerStateRoutes } from "./api/state-routes.js"
 import type { PlayerApi, SearchApi, VoiceChannel } from "./api/types.js"
@@ -87,7 +86,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerStateRoutes(app, { ...deps, snapshots })
   registerQueueRoutes(app, { ...deps, snapshots })
   registerPlayerRoutes(app, { ...deps, snapshots })
-  registerProviderRoutes(app, { ...deps, snapshots })
   registerVoiceRoutes(app, { ...deps, snapshots })
   registerWebSocket(app, {
     frontendOrigin: deps.config.frontendOrigin,

@@ -3,7 +3,6 @@ import {
   ChannelIdSchema,
   DurationMsSchema,
   GuildIdSchema,
-  type MediaProviderSettings,
   type Track,
   TrackIdSchema,
   UserIdSchema,
@@ -12,7 +11,7 @@ import {
 } from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
 
-import type { MusicSource, PlayableMedia, ProviderController } from "../../src/media/types.js"
+import type { MusicSource, PlayableMedia } from "../../src/media/types.js"
 import type {
   AudioResource,
   AudioResourceFactory,
@@ -63,26 +62,6 @@ class FakeSource implements MusicSource {
     if (track.id === this.failTrackId) throw new RangeError("unplayable fixture")
     return { ...playable, seekable: this.seekable }
   }
-}
-
-class FakeProviders implements ProviderController {
-  private value: MediaProviderSettings = {
-    preference: "youtube_only",
-    mockTidalConnected: false,
-  }
-  settings() {
-    return this.value
-  }
-  setPreference(preference: "mock_tidal_first" | "youtube_only") {
-    this.value = { ...this.value, preference }
-  }
-  connectMockTidal() {
-    this.value = { preference: "mock_tidal_first", mockTidalConnected: true }
-  }
-  disconnectMockTidal() {
-    this.value = { preference: "youtube_only", mockTidalConnected: false }
-  }
-  async close() {}
 }
 
 class FakeVoice implements VoiceGateway {
@@ -146,7 +125,6 @@ class FakeScheduler implements PlayerScheduler {
 function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
   const clock = new FixedClock(new Date("2026-01-01T00:00:00.000Z"))
   const source = new FakeSource()
-  const providers = new FakeProviders()
   const voice = new FakeVoice()
   const scheduler = new FakeScheduler()
   let sequence = 0
@@ -161,7 +139,6 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
   const service = new PlayerService({
     guildId,
     source,
-    providers,
     voice,
     resourceFactory: factory,
     clock,
@@ -172,7 +149,7 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
     reportFailure: (failure) => failures.push(failure),
     ...(settings === undefined ? {} : { settings }),
   })
-  return { clock, failures, providers, resources, scheduler, service, source, voice }
+  return { clock, failures, resources, scheduler, service, source, voice }
 }
 
 describe("PlayerService", () => {
@@ -264,33 +241,6 @@ describe("PlayerService", () => {
 
     // Then
     expect(voice.resourceVolumes).toEqual([31, 31])
-  })
-
-  it("connects the mock TIDAL simulator and persists provider priority", () => {
-    // Given
-    const saved: unknown[] = []
-    const { service } = harness({
-      get: () => ({
-        volume: VolumeSchema.parse(100),
-        loopMode: "off",
-        sourcePreference: "youtube_only",
-        mockTidalConnected: false,
-      }),
-      set: (_guild, settings) => saved.push(settings),
-    })
-
-    // When
-    service.connectMockTidal()
-
-    // Then
-    expect(service.providerSettings()).toEqual({
-      preference: "mock_tidal_first",
-      mockTidalConnected: true,
-    })
-    expect(saved.at(-1)).toMatchObject({
-      sourcePreference: "mock_tidal_first",
-      mockTidalConnected: true,
-    })
   })
 
   it("skips a failed track and continues with the next item", async () => {
