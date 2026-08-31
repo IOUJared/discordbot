@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { emptyRoom, mockWire, room, track } from "./wire.js"
+import { emptyRoom, item, mockWire, room, track } from "./wire.js"
 
 test("Given the signed-out page When Discord sign-in is clicked Then GET OAuth navigation uses the approved route", async ({
   page,
@@ -107,6 +107,60 @@ test("Given a desktop queue When an item is pointer-dragged Then its unique ID i
   await expect(page.locator("aside li").nth(2)).toHaveAttribute("data-queue-id", "queue-1")
   expect(requestBody).toEqual({ id: "queue-1", index: 2, expectedVersion: 7 })
 })
+
+for (const width of [375, 768, 1280]) {
+  test(`Given more queue items than fit at ${width}px When the queue is scrolled Then the final item is reachable`, async ({
+    page,
+  }) => {
+    // Given
+    await page.setViewportSize({ width, height: 720 })
+    if (width < 1024) await page.emulateMedia({ reducedMotion: "reduce" })
+    const longQueue = Array.from({ length: 20 }, (_, index) =>
+      item(`queue-${index + 1}`, `Track ${index + 1}`, `Artist ${index + 1}`),
+    )
+    await mockWire(page, {
+      state: { ...room, player: { ...room.player, queue: longQueue } },
+    })
+    await page.goto("/#code=long-queue")
+    if (width < 1024) {
+      await page.getByRole("button", { name: width < 768 ? "Open queue" : /Queue \(/ }).click()
+    }
+    const queueBody = page.locator("aside .queue-body")
+    const queueHeader = page.locator("aside .queue > header")
+    await expect(queueBody).toBeVisible()
+    await expect(page.locator("aside .scroll-track")).toBeVisible()
+    await expect(queueHeader.getByRole("heading", { name: /Queue/ })).toBeVisible()
+    await expect(queueHeader.getByRole("button", { name: "Clear" })).toBeVisible()
+    const headerBoxBefore = await queueHeader.boundingBox()
+    await queueBody.hover()
+    await page.screenshot({
+      path: `../../.omo/evidence/queue-scroll/screens/queue-${width}-top.png`,
+    })
+
+    // When
+    const dimensions = await queueBody.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollbarGutter: getComputedStyle(element).scrollbarGutter,
+    }))
+    await queueBody.evaluate((element) => element.scrollTo({ top: element.scrollHeight }))
+    await queueBody.hover()
+
+    // Then
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight)
+    expect(dimensions.scrollbarGutter).toBe("stable")
+    await expect(page.locator('[data-queue-id="queue-20"]')).toBeInViewport()
+    expect(await queueHeader.boundingBox()).toEqual(headerBoxBefore)
+    await expect(queueHeader.getByRole("heading", { name: /Queue/ })).toBeVisible()
+    await expect(queueHeader.getByRole("button", { name: "Clear" })).toBeVisible()
+    if (width < 1024) {
+      await expect(page.getByRole("button", { name: "Close queue", exact: true })).toBeVisible()
+    }
+    await page.screenshot({
+      path: `../../.omo/evidence/queue-scroll/screens/queue-${width}-bottom.png`,
+    })
+  })
+}
 
 test("Given a stale pointer reorder When the server conflicts Then the queue rolls back and fully resyncs", async ({
   page,
