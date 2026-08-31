@@ -22,6 +22,7 @@ export const showcasePlayer = PlayerSnapshotSchema.parse({
   guildId: "showcase-guild",
   queue: [showcaseItem],
   currentItem: showcaseItem,
+  bitrateKbps: 252,
   seekable: true,
   positionMs: 74_000,
   volume: 72,

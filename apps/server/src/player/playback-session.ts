@@ -1,4 +1,4 @@
-import type { QueueItem } from "@discord-music/contracts"
+import type { BitrateKbps, QueueItem } from "@discord-music/contracts"
 
 import type { Clock } from "../domain/clock.js"
 import type { MusicSource } from "../media/types.js"
@@ -18,6 +18,7 @@ export class PlaybackSession {
   private basePositionMs = 0
   private startedAtMs = 0
   private paused = false
+  private sourceBitrateKbps: BitrateKbps | null = null
   private resourceSeekable = false
   private generation = 0
   private startedAt = ""
@@ -44,6 +45,10 @@ export class PlaybackSession {
     return this.item !== null && this.resource !== null && this.resourceSeekable
   }
 
+  get bitrateKbps(): BitrateKbps | null {
+    return this.item === null ? null : this.sourceBitrateKbps
+  }
+
   begin(item: QueueItem, offsetMs: number): PlaybackStart {
     this.abort?.abort()
     const abort = new AbortController()
@@ -56,6 +61,7 @@ export class PlaybackSession {
     this.paused = false
     this.resource?.dispose()
     this.resource = null
+    this.sourceBitrateKbps = null
     this.resourceSeekable = false
     return { generation: this.generation, item, offsetMs, signal: abort.signal }
   }
@@ -71,6 +77,7 @@ export class PlaybackSession {
       return null
     }
     this.resource = resource
+    this.sourceBitrateKbps = media.bitrateKbps
     this.resourceSeekable = media.seekable
     return resource
   }
@@ -104,6 +111,7 @@ export class PlaybackSession {
     this.abort?.abort()
     this.abort = null
     this.resource = null
+    this.sourceBitrateKbps = null
     this.resourceSeekable = false
     this.item = null
     this.basePositionMs = 0

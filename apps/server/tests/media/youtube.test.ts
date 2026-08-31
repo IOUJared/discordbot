@@ -311,6 +311,7 @@ describe("YouTube yt-dlp boundary", () => {
       http_headers: { Authorization: "secret", "User-Agent": "agent" },
       ext: "webm",
       acodec: "opus",
+      abr: 251.7,
       protocol: "https",
     })
 
@@ -324,6 +325,7 @@ describe("YouTube yt-dlp boundary", () => {
       headers: { Authorization: "secret", "User-Agent": "agent" },
       container: "webm",
       codec: "opus",
+      bitrateKbps: 252,
       seekable: true,
     })
   })

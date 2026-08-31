@@ -1,4 +1,5 @@
 import {
+  BitrateKbpsSchema,
   DurationMsSchema,
   type SearchResult,
   type Track,
@@ -56,6 +57,7 @@ const resolvedOutputSchema = z.object({
   http_headers: safeHttpHeadersSchema.default({}),
   ext: z.string().min(1),
   acodec: z.string().min(1),
+  abr: z.number().positive().nullable().optional(),
   protocol: z.enum(["http", "https"]),
 })
 const processTimeoutMs = 20_000
@@ -151,6 +153,10 @@ export function parseResolvedOutput(output: string): RemotePlayableMedia {
     headers: parsed.http_headers,
     container: parsed.ext,
     codec: parsed.acodec,
+    bitrateKbps:
+      parsed.abr === null || parsed.abr === undefined
+        ? null
+        : BitrateKbpsSchema.parse(Math.round(parsed.abr)),
     seekable: true,
   }
 }

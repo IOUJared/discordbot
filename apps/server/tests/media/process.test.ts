@@ -36,6 +36,7 @@ describe("external media processes", () => {
         headers: { "User-Agent": "agent" },
         container: "m4a",
         codec: "aac",
+        bitrateKbps: null,
         seekable: true,
       },
       1_500,

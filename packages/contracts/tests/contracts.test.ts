@@ -73,6 +73,7 @@ describe("contracts", () => {
       guildId: "guild:001",
       queue: [firstQueueItem, secondQueueItem],
       currentItem: firstQueueItem,
+      bitrateKbps: 252,
       seekable: false,
       positionMs: 12_345,
       volume: 100,
@@ -87,6 +88,7 @@ describe("contracts", () => {
     // Then: the serialized wire value retains the parsed playback state.
     expect(JSON.parse(serialized)).toMatchObject({
       currentItem: { id: "queue:001" },
+      bitrateKbps: 252,
       seekable: false,
       loopMode: "queue",
       volume: 100,

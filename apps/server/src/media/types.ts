@@ -1,4 +1,5 @@
 import type {
+  BitrateKbps,
   MediaProviderSettings,
   MediaSourcePreference,
   SearchResult,
@@ -11,6 +12,7 @@ type MediaMetadata = {
   readonly headers: Readonly<Record<string, string>>
   readonly container: string
   readonly codec: string
+  readonly bitrateKbps: BitrateKbps | null
   readonly seekable: boolean
 }
 

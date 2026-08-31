@@ -34,6 +34,7 @@ export const room = {
       item("queue-6", "Slow Horizon", "Paper Atlas"),
     ],
     currentItem: item("current", "Mountain Echoes", "Harbor Lights"),
+    bitrateKbps: 252,
     seekable: true,
     positionMs: 84_000,
     volume: 72,

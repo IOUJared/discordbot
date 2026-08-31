@@ -17,6 +17,7 @@ export const HistoryItemIdSchema = boundedIdentifier.brand<"HistoryItemId">()
 export const DurationMsSchema = z.number().int().nonnegative().brand<"DurationMs">()
 export const PositionMsSchema = z.number().int().nonnegative().brand<"PositionMs">()
 export const VolumeSchema = z.number().int().min(0).max(200).brand<"Volume">()
+export const BitrateKbpsSchema = z.number().int().positive().max(100_000).brand<"BitrateKbps">()
 export const TimestampSchema = timestamp.brand<"Timestamp">()
 
 export type TrackId = z.infer<typeof TrackIdSchema>
@@ -28,6 +29,7 @@ export type HistoryItemId = z.infer<typeof HistoryItemIdSchema>
 export type DurationMs = z.infer<typeof DurationMsSchema>
 export type PositionMs = z.infer<typeof PositionMsSchema>
 export type Volume = z.infer<typeof VolumeSchema>
+export type BitrateKbps = z.infer<typeof BitrateKbpsSchema>
 export type Timestamp = z.infer<typeof TimestampSchema>
 
 export const TrackProviderSchema = z.enum(TRACK_PROVIDERS)
@@ -120,6 +122,7 @@ export const PlayerSnapshotSchema = z
     guildId: GuildIdSchema,
     queue: z.array(QueueItemSchema).readonly(),
     currentItem: QueueItemSchema.nullable(),
+    bitrateKbps: BitrateKbpsSchema.nullable().optional(),
     seekable: z.boolean(),
     positionMs: PositionMsSchema,
     volume: VolumeSchema,

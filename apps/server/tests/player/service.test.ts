@@ -1,4 +1,5 @@
 import {
+  BitrateKbpsSchema,
   ChannelIdSchema,
   DurationMsSchema,
   GuildIdSchema,
@@ -33,6 +34,7 @@ const playable: PlayableMedia = {
   headers: {},
   container: "webm",
   codec: "opus",
+  bitrateKbps: BitrateKbpsSchema.parse(252),
   seekable: true,
 }
 function track(index: number): Track {
@@ -205,6 +207,7 @@ describe("PlayerService", () => {
     // Then
     expect(service.snapshot()).toMatchObject({
       currentItem: { id: "generated-0" },
+      bitrateKbps: 252,
       queue: [{ id: "generated-1" }],
     })
   })

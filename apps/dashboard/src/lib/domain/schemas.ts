@@ -11,6 +11,7 @@ const timestamp = z.iso.datetime({ offset: true }).brand<"Timestamp">()
 const duration = z.int().check(z.nonnegative()).brand<"DurationMs">()
 const position = z.int().check(z.nonnegative()).brand<"PositionMs">()
 const volume = z.int().check(z.minimum(0), z.maximum(200)).brand<"Volume">()
+const bitrateKbps = z.int().check(z.positive(), z.maximum(100_000)).brand<"BitrateKbps">()
 
 export const SessionSchema = z.strictObject({
   token: z.string().check(z.minLength(1)),
@@ -43,6 +44,7 @@ const playerSchema = z.strictObject({
   guildId,
   queue: z.readonly(z.array(QueueItemSchema)),
   currentItem: z.nullable(QueueItemSchema),
+  bitrateKbps: z.optional(z.nullable(bitrateKbps)),
   seekable: z.boolean(),
   positionMs: position,
   volume,

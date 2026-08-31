@@ -1,4 +1,4 @@
-import type { SearchResult, Track } from "@discord-music/contracts"
+import { BitrateKbpsSchema, type SearchResult, type Track } from "@discord-music/contracts"
 
 import { GeneratedWavStore } from "./generated-wav-store.js"
 import { mockTidalCatalogEntry, searchMockTidalCatalog } from "./mock-tidal-catalog.js"
@@ -26,6 +26,7 @@ export class MockTidalMusicSource implements MusicSource {
       headers: {},
       container: "wav",
       codec: "pcm_s16le",
+      bitrateKbps: BitrateKbpsSchema.parse(1_536),
       seekable: true,
     }
   }

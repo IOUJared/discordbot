@@ -143,7 +143,7 @@ Build a non-product `/design-system` showcase first. At 375px, 768px, and 1280px
 
 ### Now-playing panel and artwork frame
 
-- **Structure:** `section > artwork figure + heading/artist + seek range + actions`.
+- **Structure:** `section > artwork figure + heading/artist + source bitrate quality indicator + seek range + actions`. The indicator reports the resolved source stream as an exact integer `kbps` value; it never infers quality from artwork or track metadata and remains absent until resolution supplies a bitrate.
 - **Variants:** full desktop, compact tablet, mobile stacked.
 - **States:** default artwork; hover only on actionable artwork menu; active command; focus-visible menu; disabled unavailable command; loading metadata/skeleton; empty “Nothing is playing”; error unavailable media.
 - **Accessibility:** artwork has informative `alt` only when it identifies media; otherwise empty alt. Track, artist, elapsed time, and playback state are exposed as text, not color.

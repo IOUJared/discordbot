@@ -519,6 +519,7 @@ test("Given OAuth callback When the listener controls playback Then the real das
   })
   await page.goto("/#code=one-time")
   await expect(page.getByTestId("current-track")).toHaveAttribute("data-track-id", "track-current")
+  await expect(page.getByText("252 kbps", { exact: true })).toBeVisible()
   await expect(page).toHaveURL(/\/$/)
   await page.getByPlaceholder("Song, artist, or YouTube link").fill("Northern Lines")
   await page.getByRole("button", { name: "Search", exact: true }).click()
@@ -589,6 +590,31 @@ for (const width of [375, 768, 1920]) {
     }
     await page.screenshot({
       path: `../../.omo/evidence/search-redesign/results-${width}.png`,
+      fullPage: true,
+    })
+  })
+}
+
+for (const width of [375, 768, 1280]) {
+  test(`Given resolved source audio at ${width}px When the player renders Then its bitrate quality remains visible`, async ({
+    page,
+  }) => {
+    // Given
+    await page.setViewportSize({ width, height: 900 })
+    await mockWire(page)
+
+    // When
+    await page.goto("/#code=source-quality")
+
+    // Then
+    const quality = page.getByLabel("Source audio quality: 252 kilobits per second")
+    await expect(quality).toBeVisible()
+    await expect(quality).toContainText("252 kbps")
+    const box = await quality.boundingBox()
+    expect(box?.x ?? -1).toBeGreaterThanOrEqual(0)
+    expect((box?.x ?? width) + (box?.width ?? width)).toBeLessThanOrEqual(width)
+    await page.screenshot({
+      path: `../../.omo/evidence/source-quality/player-${width}.png`,
       fullPage: true,
     })
   })

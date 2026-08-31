@@ -206,6 +206,7 @@ export class PlayerService extends QueueControls {
       guildId: this.options.guildId,
       queue: this.queue.list(),
       currentItem: this.playback.current,
+      bitrateKbps: this.playback.bitrateKbps,
       seekable: this.playback.seekable,
       positionMs: PositionMsSchema.parse(this.playback.position()),
       volume: this.volume,

@@ -54,6 +54,7 @@ describe("direct media HTTP boundary", () => {
       headers: {},
       container: "webm",
       codec: "opus",
+      bitrateKbps: null,
       seekable: true,
     }
 
@@ -106,6 +107,7 @@ describe("direct media HTTP boundary", () => {
       headers: {},
       container: "webm",
       codec: "opus",
+      bitrateKbps: null,
       seekable: true,
     }
 
