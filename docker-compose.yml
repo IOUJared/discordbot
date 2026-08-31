@@ -10,7 +10,7 @@ services:
       PORT: 3000
     volumes:
       - music-data:/data
-      - ./secrets:/run/secrets/discord-music:ro
+      - ./secrets:/run/secrets/discord-music
     ports:
       - "3000:3000"
     restart: unless-stopped

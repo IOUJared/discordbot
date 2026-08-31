@@ -46,8 +46,8 @@ Optional authenticated YouTube playback accepts a Netscape-format cookie file th
 `YOUTUBE_COOKIES_PATH`. For Docker Compose, place the file at
 `./secrets/youtube.cookies.txt`, set
 `YOUTUBE_COOKIES_PATH=/run/secrets/discord-music/youtube.cookies.txt` in `.env`, and keep the file
-read-only and outside Git. The cookie file grants account access and must be protected like a
-password.
+owner-only and outside Git. `yt-dlp` must be able to update the file when YouTube refreshes account
+cookies. The cookie file grants account access and must be protected like a password.
 
 ## Mock TIDAL simulator
 
