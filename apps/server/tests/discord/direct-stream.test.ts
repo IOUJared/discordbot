@@ -43,12 +43,13 @@ describe("direct media HTTP boundary", () => {
     const beforeReserve = ready
     source.write("5678")
     const stream = await pending
+    const buffered = stream.read(8)
 
     // Then
-    expect({ beforeReserve, ready, bufferedBytes: stream.readableLength }).toEqual({
+    expect({ beforeReserve, ready, buffered: buffered?.toString() }).toEqual({
       beforeReserve: false,
       ready: true,
-      bufferedBytes: 8,
+      buffered: "12345678",
     })
     source.end()
     stream.destroy()

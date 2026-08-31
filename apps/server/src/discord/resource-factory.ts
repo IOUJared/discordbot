@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { type AudioResource, createAudioResource, demuxProbe, StreamType } from "@discordjs/voice"
+import { type AudioResource, createAudioResource, StreamType } from "@discordjs/voice"
 
 import type { PlayableMedia } from "../media/types.js"
 import type { AudioResourceFactory, AudioResource as PlayerAudioResource } from "../player/ports.js"
@@ -60,18 +60,13 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
     signal?: AbortSignal,
   ): Promise<PlayerAudioResource> {
     if (media.kind === "remote" && media.container === "webm" && media.codec === "opus") {
-      try {
-        const stream = await bufferDirectStream(
-          await openDirectStream(media, signal === undefined ? {} : { signal }),
-        )
-        const probe = await demuxProbe(stream)
-        return new DiscordVoiceResource(
-          createAudioResource(probe.stream, { inputType: probe.type, inlineVolume: true }),
-          () => probe.stream.destroy(),
-        )
-      } catch (error) {
-        if (!(error instanceof Error)) throw error
-      }
+      const stream = await bufferDirectStream(
+        await openDirectStream(media, signal === undefined ? {} : { signal }),
+      )
+      return new DiscordVoiceResource(
+        createAudioResource(stream, { inputType: StreamType.WebmOpus, inlineVolume: true }),
+        () => stream.destroy(),
+      )
     }
     const remoteStream =
       media.kind === "remote"
