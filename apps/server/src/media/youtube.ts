@@ -232,6 +232,14 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
     if (parsedTrack.provider !== "youtube") {
       throw new RangeError("Track is not a YouTube track")
     }
+    const parsedUrl = new URL(parsedTrack.url)
+    const playbackUrl =
+      this.youtubeCookiesPath === undefined
+        ? parsedTrack.url
+        : new URL(
+            `${parsedUrl.pathname}${parsedUrl.search}`,
+            "https://music.youtube.com",
+          ).toString()
     const request = {
       file: "yt-dlp",
       args: [
@@ -241,7 +249,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
         "--no-warnings",
         "-f",
         "bestaudio",
-        parsedTrack.url,
+        playbackUrl,
       ],
       timeoutMs: processTimeoutMs,
       ...(signal === undefined ? {} : { signal }),

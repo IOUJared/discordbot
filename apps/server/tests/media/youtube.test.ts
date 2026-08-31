@@ -446,5 +446,6 @@ describe("YouTube yt-dlp boundary", () => {
     // Then
     expect(args).toContain("--cookies")
     expect(args.at(args.indexOf("--cookies") + 1)).toBe("/run/secrets/youtube.cookies.txt")
+    expect(args.at(-1)).toBe("https://music.youtube.com/watch?v=abc")
   })
 })
