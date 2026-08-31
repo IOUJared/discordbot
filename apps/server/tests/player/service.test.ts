@@ -54,7 +54,7 @@ class FakeSource implements MusicSource {
   seekable = true
 
   async search() {
-    return [trackOne, track(2), track(3)].map((track) => ({ track, score: 1 }))
+    return [trackOne, track(2), track(3)].map((track) => ({ track, score: 1, bitrateKbps: null }))
   }
 
   async resolve(track: Track) {

@@ -71,6 +71,7 @@ export const SearchResultSchema = z
   .object({
     track: TrackSchema,
     score: z.number().min(0).max(1),
+    bitrateKbps: BitrateKbpsSchema.nullable(),
   })
   .strict()
 

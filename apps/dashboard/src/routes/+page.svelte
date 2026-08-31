@@ -244,7 +244,7 @@
     } catch (caught) { if (caught instanceof DashboardApiError && caught.status === 409) await refresh(); queueError = explain(caught) }
   }
   async function selectView(next: "player"|"history"): Promise<void> { view = next; if (next === "history") { historyLoading = true; try { history = await api.history() } catch (caught) { error = explain(caught) } finally { historyLoading = false } } }
-  async function historyAction(item: HistoryItem, play: boolean): Promise<void> { await add({ track:item.queueItem.track, score:1 },play); view="player" }
+  async function historyAction(item: HistoryItem, play: boolean): Promise<void> { await add({ track:item.queueItem.track, score:1, bitrateKbps:null },play); view="player" }
   async function voiceAction(): Promise<void> { if (snapshot === null) return; busy=true; try { applyState(snapshot.voice.connected ? await api.leave() : await api.join(selectedChannel)) } catch(caught){error=explain(caught)} finally{busy=false} }
   async function connectVoiceChannel(channel: VoiceChannel): Promise<void> { if (snapshot === null || snapshot.voice.channelId === channel.id) return; selectedChannel=channel.id; busy=true; try { applyState(await api.join(channel.id)) } catch(caught){error=explain(caught)} finally{busy=false} }
 </script>

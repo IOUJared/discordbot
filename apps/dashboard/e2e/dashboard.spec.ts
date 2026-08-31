@@ -36,6 +36,22 @@ test("Given disconnected desktop voice When channels load Then each real channel
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toHaveCount(0)
 })
 
+for (const width of [375, 768, 1280]) {
+  test(`Given bitrate-ranked search results at ${width}px When search completes Then stream quality is visible`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await mockWire(page)
+    await page.goto("/#code=bitrate-search")
+    await page.getByPlaceholder("Song, artist, or YouTube link").fill("Northern Lines")
+    await page.getByRole("button", { name: "Search", exact: true }).click()
+    await expect(
+      page.getByTestId("search-result").getByText("252 kbps", { exact: true }),
+    ).toBeVisible()
+    expect(await page.locator("body").evaluate((body) => body.scrollWidth)).toBe(width)
+  })
+}
+
 test("Given real Discord voice channels When one is clicked Then the bot connects to that channel", async ({
   page,
 }) => {
@@ -514,7 +530,13 @@ test("Given OAuth callback When the listener controls playback Then the real das
     searchRequest = { method: route.request().method(), body: route.request().postDataJSON() }
     await route.fulfill({
       json: {
-        results: [{ track: track("search-1", "Northern Lines", "Small Hours"), score: 0.94 }],
+        results: [
+          {
+            track: track("search-1", "Northern Lines", "Small Hours"),
+            score: 0.94,
+            bitrateKbps: 252,
+          },
+        ],
       },
     })
   })
@@ -531,7 +553,7 @@ test("Given OAuth callback When the listener controls playback Then the real das
   await expect(searchResult.getByRole("img", { name: "Artwork for Northern Lines" })).toBeVisible()
   await expect(searchResult.getByText("4:00", { exact: true })).toBeVisible()
   await expect(searchResult.getByText("YouTube", { exact: true })).toBeVisible()
-  await expect(searchResult.getByText("Best match", { exact: true })).toBeVisible()
+  await expect(searchResult.getByText("Highest quality", { exact: true })).toBeVisible()
   await expect(
     searchResult.getByRole("button", { name: "Add Northern Lines to queue" }),
   ).toBeVisible()
@@ -691,6 +713,7 @@ for (const width of [375, 768, 1920]) {
           results: Array.from({ length: 5 }, (_, index) => ({
             track: track(`search-${index + 1}`, `Northern Lines ${index + 1}`, "Small Hours"),
             score: 1 - index * 0.1,
+            bitrateKbps: 252 - index,
           })),
         },
       })

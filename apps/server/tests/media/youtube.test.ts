@@ -120,7 +120,31 @@ describe("YouTube yt-dlp boundary", () => {
     const results = parseSearchOutput(output)
 
     // Then
-    expect(results.at(0)?.track).toMatchObject({ id: "video-1", durationMs: 42_000 })
+    expect(results.at(0)).toMatchObject({
+      track: { id: "video-1", durationMs: 42_000 },
+      bitrateKbps: null,
+    })
+  })
+
+  it("Given selected audio formats When search metadata is parsed Then higher bitrates rank first", () => {
+    // Given
+    const output = JSON.stringify({
+      entries: [
+        { id: "standard", title: "Song Standard", uploader: "Artist", duration: 180, abr: 128 },
+        { id: "premium", title: "Song Premium", uploader: "Artist", duration: 180, abr: 251.7 },
+        { id: "unknown", title: "Song Unknown", uploader: "Artist", duration: 180 },
+      ],
+    })
+
+    // When
+    const results = parseSearchOutput(output)
+
+    // Then
+    expect(results.map(({ track, bitrateKbps }) => [track.id, bitrateKbps])).toEqual([
+      ["premium", 252],
+      ["standard", 128],
+      ["unknown", null],
+    ])
   })
 
   it("rejects malformed external JSON", () => {
@@ -142,9 +166,9 @@ describe("YouTube yt-dlp boundary", () => {
     const args = youtubeSearchArgs(payload)
 
     // Then
-    expect(args.at(-1)).toBe(`ytsearch10:${payload}`)
-    expect(args).toContain("--flat-playlist")
-    expect(args).not.toContain("-f")
+    expect(args.at(-1)).toBe(`ytsearch5:${payload}`)
+    expect(args).not.toContain("--flat-playlist")
+    expect(args).toContain("bestaudio")
   })
 
   it("derives YouTube artwork when flat search omits a thumbnail", () => {

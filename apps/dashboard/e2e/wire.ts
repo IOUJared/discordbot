@@ -136,7 +136,13 @@ export async function mockWire(page: Page, options: WireOptions = {}): Promise<v
     }
     await route.fulfill({
       json: {
-        results: [{ track: track("search-1", "Northern Lines", "Small Hours"), score: 0.94 }],
+        results: [
+          {
+            track: track("search-1", "Northern Lines", "Small Hours"),
+            score: 0.94,
+            bitrateKbps: 252,
+          },
+        ],
       },
     })
   })

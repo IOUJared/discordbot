@@ -36,6 +36,7 @@ const searchEntrySchema = z.object({
   channel_is_verified: z.boolean().nullable().optional(),
   duration: z.number().nonnegative(),
   thumbnail: z.url().nullable().optional(),
+  abr: z.number().positive().nullable().optional(),
 })
 const searchOutputSchema = z.object({ entries: z.array(searchEntrySchema) })
 const safeHttpHeadersSchema = z
@@ -90,10 +91,11 @@ type PlaylistCacheEntry = {
 export function youtubeSearchArgs(query: string): readonly string[] {
   return [
     "--dump-single-json",
-    "--flat-playlist",
     "--no-playlist",
     "--no-warnings",
-    `ytsearch10:${query}`,
+    "-f",
+    "bestaudio",
+    `ytsearch5:${query}`,
   ]
 }
 
@@ -140,8 +142,17 @@ export function parseSearchOutput(output: string): readonly SearchResult[] {
             `https://i.ytimg.com/vi/${encodeURIComponent(entry.id)}/hqdefault.jpg`,
         }),
         score: Math.max(0, 1 - index * 0.1),
+        bitrateKbps:
+          entry.abr === null || entry.abr === undefined
+            ? null
+            : BitrateKbpsSchema.parse(Math.round(entry.abr)),
       }
     })
+    .sort(
+      (left, right) =>
+        (right.bitrateKbps ?? Number.NEGATIVE_INFINITY) -
+        (left.bitrateKbps ?? Number.NEGATIVE_INFINITY),
+    )
     .slice(0, maximumSearchResults)
 }
 
@@ -190,7 +201,10 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
 
     const request = {
       file: "yt-dlp",
-      args: youtubeSearchArgs(query),
+      args: [
+        ...(this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]),
+        ...youtubeSearchArgs(query),
+      ],
       timeoutMs: processTimeoutMs,
       ...(signal === undefined ? {} : { signal }),
     }

@@ -160,6 +160,7 @@ const app = await buildApp({
           durationMs: 60_000,
         },
         score: 1,
+        bitrateKbps: 128,
       },
     ],
   },

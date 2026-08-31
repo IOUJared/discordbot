@@ -38,6 +38,7 @@ export const QueueItemSchema = z.strictObject({
 export const SearchResultSchema = z.strictObject({
   track: TrackSchema,
   score: z.number().check(z.minimum(0), z.maximum(1)),
+  bitrateKbps: z.nullable(bitrateKbps),
 })
 
 const playerSchema = z.strictObject({
