@@ -41,6 +41,7 @@ export async function openDirectStream(
         },
       },
       (response) => {
+        request.setTimeout(0)
         const status = response.statusCode ?? 0
         if (status < 200 || status >= 300) {
           response.destroy()
