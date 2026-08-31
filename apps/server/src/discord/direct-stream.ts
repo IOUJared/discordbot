@@ -1,11 +1,13 @@
 import { get } from "node:http"
 import { get as getSecure } from "node:https"
-import type { Readable } from "node:stream"
+import { PassThrough, type Readable } from "node:stream"
 
 import { type RemoteMediaPolicy, remoteMediaPolicy } from "../media/media-url-policy.js"
 import type { RemotePlayableMedia } from "../media/types.js"
 
 const directTimeoutMs = 20_000
+const playbackBufferBytes = 128 * 1024
+const playbackHighWaterMarkBytes = 512 * 1024
 
 export class DirectMediaError extends Error {
   constructor(message: string, cause?: Error) {
@@ -17,6 +19,45 @@ export class DirectMediaError extends Error {
 type DirectStreamOptions = {
   readonly signal?: AbortSignal
   readonly policy?: RemoteMediaPolicy
+}
+
+export async function bufferDirectStream(
+  source: Readable,
+  minimumBytes = playbackBufferBytes,
+): Promise<Readable> {
+  const buffer = new PassThrough({ highWaterMark: playbackHighWaterMarkBytes })
+  const forwardSourceError = (error: Error) => buffer.destroy(error)
+  source.once("error", forwardSourceError)
+  buffer.once("close", () => source.off("error", forwardSourceError))
+  source.pipe(buffer)
+  if (minimumBytes === 0) return buffer
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      buffer.off("readable", onReadable)
+      source.off("end", onEnd)
+      buffer.off("error", onError)
+    }
+    const finish = () => {
+      cleanup()
+      resolve(buffer)
+    }
+    const onReadable = () => {
+      if (buffer.readableLength >= minimumBytes) finish()
+    }
+    const onEnd = () => finish()
+    const onError = (error: Error) => {
+      cleanup()
+      source.destroy()
+      buffer.destroy()
+      reject(new DirectMediaError("Direct media buffering failed", error))
+    }
+
+    buffer.on("readable", onReadable)
+    source.once("end", onEnd)
+    buffer.once("error", onError)
+    onReadable()
+  })
 }
 
 export async function openDirectStream(

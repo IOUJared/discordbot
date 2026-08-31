@@ -3,7 +3,7 @@ import { type AudioResource, createAudioResource, demuxProbe, StreamType } from 
 
 import type { PlayableMedia } from "../media/types.js"
 import type { AudioResourceFactory, AudioResource as PlayerAudioResource } from "../player/ports.js"
-import { openDirectStream } from "./direct-stream.js"
+import { bufferDirectStream, openDirectStream } from "./direct-stream.js"
 
 export class DiscordVoiceResource implements PlayerAudioResource {
   readonly audioResource: AudioResource<null>
@@ -61,7 +61,9 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
   ): Promise<PlayerAudioResource> {
     if (media.kind === "remote" && media.container === "webm" && media.codec === "opus") {
       try {
-        const stream = await openDirectStream(media, signal === undefined ? {} : { signal })
+        const stream = await bufferDirectStream(
+          await openDirectStream(media, signal === undefined ? {} : { signal }),
+        )
         const probe = await demuxProbe(stream)
         return new DiscordVoiceResource(
           createAudioResource(probe.stream, { inputType: probe.type, inlineVolume: true }),
@@ -73,7 +75,9 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
     }
     const remoteStream =
       media.kind === "remote"
-        ? await openDirectStream(media, signal === undefined ? {} : { signal })
+        ? await bufferDirectStream(
+            await openDirectStream(media, signal === undefined ? {} : { signal }),
+          )
         : undefined
     const child = spawn("ffmpeg", [...ffmpegArgs(media, offsetMs)], {
       shell: false,

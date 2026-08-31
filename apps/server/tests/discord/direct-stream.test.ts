@@ -1,8 +1,13 @@
 import { once } from "node:events"
 import { createServer, IncomingMessage } from "node:http"
+import { PassThrough } from "node:stream"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { DirectMediaError, openDirectStream } from "../../src/discord/direct-stream.js"
+import {
+  bufferDirectStream,
+  DirectMediaError,
+  openDirectStream,
+} from "../../src/discord/direct-stream.js"
 import { type RemoteMediaPolicy, RemoteMediaUrlSchema } from "../../src/media/media-url-policy.js"
 import type { RemotePlayableMedia } from "../../src/media/types.js"
 
@@ -23,6 +28,32 @@ afterEach(async () => {
 })
 
 describe("direct media HTTP boundary", () => {
+  it("holds playback until a read-ahead reserve is available", async () => {
+    // Given
+    const source = new PassThrough()
+    let ready = false
+    const pending = bufferDirectStream(source, 8).then((stream) => {
+      ready = true
+      return stream
+    })
+
+    // When
+    source.write("1234")
+    await new Promise((resolve) => setImmediate(resolve))
+    const beforeReserve = ready
+    source.write("5678")
+    const stream = await pending
+
+    // Then
+    expect({ beforeReserve, ready, bufferedBytes: stream.readableLength }).toEqual({
+      beforeReserve: false,
+      ready: true,
+      bufferedBytes: 8,
+    })
+    source.end()
+    stream.destroy()
+  })
+
   it("Given an established media response When playback stops reading Then no connection timeout remains", async () => {
     // Given
     const server = createServer((_request, response) => {
