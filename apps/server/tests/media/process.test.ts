@@ -46,4 +46,28 @@ describe("external media processes", () => {
     expect(args).not.toContain(url)
     expect(args).toContain("pipe:0")
   })
+
+  it("uses an authorized loopback bridge for a remote seek", () => {
+    const mediaUrl = RemoteMediaUrlSchema.parse(
+      "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+    )
+
+    const args = ffmpegArgs(
+      {
+        kind: "remote",
+        url: mediaUrl,
+        headers: {},
+        container: "webm",
+        codec: "opus",
+        bitrateKbps: null,
+        seekable: true,
+      },
+      45_000,
+      "http://127.0.0.1:43210/media",
+    )
+
+    expect(args).toContain("45.000")
+    expect(args).toContain("http://127.0.0.1:43210/media")
+    expect(args).not.toContain(mediaUrl)
+  })
 })

@@ -1,5 +1,5 @@
 import { once } from "node:events"
-import { createServer, IncomingMessage } from "node:http"
+import { createServer, get, IncomingMessage } from "node:http"
 import { PassThrough } from "node:stream"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -7,6 +7,7 @@ import {
   bufferDirectStream,
   DirectMediaError,
   openDirectStream,
+  openSeekableMediaProxy,
 } from "../../src/discord/direct-stream.js"
 import { type RemoteMediaPolicy, RemoteMediaUrlSchema } from "../../src/media/media-url-policy.js"
 import type { RemotePlayableMedia } from "../../src/media/types.js"
@@ -28,6 +29,71 @@ afterEach(async () => {
 })
 
 describe("direct media HTTP boundary", () => {
+  it("forwards byte-range requests through the authorized seek bridge", async () => {
+    // Given
+    let receivedRange: string | undefined
+    const server = createServer((request, response) => {
+      receivedRange = request.headers.range
+      response.writeHead(206, {
+        "accept-ranges": "bytes",
+        "content-range": "bytes 4-7/8",
+        "content-length": "4",
+      })
+      response.end("5678")
+    })
+    servers.push(server)
+    server.listen(0, "127.0.0.1")
+    await once(server, "listening")
+    const address = server.address()
+    if (address === null || typeof address === "string") {
+      throw new RangeError("Expected an IP test server address")
+    }
+    const url = RemoteMediaUrlSchema.parse("http://rr1.googlevideo.com/audio")
+    const policy: RemoteMediaPolicy = {
+      async authorize() {
+        return {
+          url,
+          hostname: "rr1.googlevideo.com",
+          address: "127.0.0.1",
+          family: 4,
+          port: address.port,
+        }
+      },
+    }
+    const proxy = await openSeekableMediaProxy(
+      {
+        kind: "remote",
+        url,
+        headers: {},
+        container: "webm",
+        codec: "opus",
+        bitrateKbps: null,
+        seekable: true,
+      },
+      { policy },
+    )
+
+    // When
+    const response = await new Promise<IncomingMessage>((resolve, reject) => {
+      const request = get(proxy.url, { headers: { range: "bytes=4-" } }, resolve)
+      request.once("error", reject)
+    })
+    let body = ""
+    response.setEncoding("utf8")
+    response.on("data", (chunk: string) => {
+      body += chunk
+    })
+    await once(response, "end")
+    proxy.close()
+
+    // Then
+    expect({ status: response.statusCode, receivedRange, body }).toEqual({
+      status: 206,
+      receivedRange: "bytes=4-",
+      body: "5678",
+    })
+  })
+
   it("holds playback until a read-ahead reserve is available", async () => {
     // Given
     const source = new PassThrough()

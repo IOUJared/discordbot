@@ -3,7 +3,7 @@ import { type AudioResource, createAudioResource, StreamType } from "@discordjs/
 
 import type { PlayableMedia } from "../media/types.js"
 import type { AudioResourceFactory, AudioResource as PlayerAudioResource } from "../player/ports.js"
-import { bufferDirectStream, openDirectStream } from "./direct-stream.js"
+import { bufferDirectStream, openDirectStream, openSeekableMediaProxy } from "./direct-stream.js"
 
 export class DiscordVoiceResource implements PlayerAudioResource {
   readonly audioResource: AudioResource<null>
@@ -20,7 +20,11 @@ export class DiscordVoiceResource implements PlayerAudioResource {
   }
 }
 
-export function ffmpegArgs(media: PlayableMedia, offsetMs: number): readonly string[] {
+export function ffmpegArgs(
+  media: PlayableMedia,
+  offsetMs: number,
+  inputOverride?: string,
+): readonly string[] {
   const args = ["-nostdin", "-hide_banner", "-loglevel", "error"]
   if (offsetMs > 0) args.push("-ss", (offsetMs / 1_000).toFixed(3))
   let input: string
@@ -38,7 +42,7 @@ export function ffmpegArgs(media: PlayableMedia, offsetMs: number): readonly str
   }
   args.push(
     "-i",
-    input,
+    inputOverride ?? input,
     "-vn",
     "-ac",
     "2",
@@ -59,7 +63,12 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
     offsetMs: number,
     signal?: AbortSignal,
   ): Promise<PlayerAudioResource> {
-    if (media.kind === "remote" && media.container === "webm" && media.codec === "opus") {
+    if (
+      offsetMs === 0 &&
+      media.kind === "remote" &&
+      media.container === "webm" &&
+      media.codec === "opus"
+    ) {
       const stream = await bufferDirectStream(
         await openDirectStream(media, signal === undefined ? {} : { signal }),
       )
@@ -68,13 +77,17 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
         () => stream.destroy(),
       )
     }
+    const seekProxy =
+      media.kind === "remote" && offsetMs > 0
+        ? await openSeekableMediaProxy(media, signal === undefined ? {} : { signal })
+        : undefined
     const remoteStream =
-      media.kind === "remote"
+      media.kind === "remote" && seekProxy === undefined
         ? await bufferDirectStream(
             await openDirectStream(media, signal === undefined ? {} : { signal }),
           )
         : undefined
-    const child = spawn("ffmpeg", [...ffmpegArgs(media, offsetMs)], {
+    const child = spawn("ffmpeg", [...ffmpegArgs(media, offsetMs, seekProxy?.url)], {
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     })
@@ -89,6 +102,7 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
       () => {
         removeAbortListener()
         remoteStream?.destroy()
+        seekProxy?.close()
         if (child.exitCode === null) child.kill("SIGKILL")
       },
     )
