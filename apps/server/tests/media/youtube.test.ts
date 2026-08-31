@@ -1,6 +1,10 @@
 import { TrackSchema } from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
-import { createRemoteMediaPolicy } from "../../src/media/media-url-policy.js"
+import {
+  createRemoteMediaPolicy,
+  type RemoteMediaPolicy,
+  RemoteMediaUrlSchema,
+} from "../../src/media/media-url-policy.js"
 import type { ProcessExecutor } from "../../src/media/types.js"
 import {
   parsePlaylistOutput,
@@ -390,5 +394,57 @@ describe("YouTube yt-dlp boundary", () => {
 
     // Then: the media is rejected before it can reach playback.
     await expect(resolve).rejects.toThrow()
+  })
+
+  it("Given a Premium cookie secret When a track resolves Then yt-dlp authenticates with that file", async () => {
+    // Given
+    let args: readonly string[] = []
+    const executor: ProcessExecutor = {
+      async run(request) {
+        args = request.args
+        return {
+          stdout: JSON.stringify({
+            url: "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+            http_headers: {},
+            ext: "webm",
+            acodec: "opus",
+            protocol: "https",
+          }),
+          stderr: "",
+        }
+      },
+    }
+    const deliveryUrl = RemoteMediaUrlSchema.parse(
+      "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+    )
+    const policy: RemoteMediaPolicy = {
+      async authorize() {
+        return {
+          url: deliveryUrl,
+          hostname: "rr1---sn-a5mekn7z.googlevideo.com",
+          address: "142.250.190.110",
+          family: 4,
+          port: 443,
+        }
+      },
+    }
+    const source = new YouTubeMusicSource(executor, policy, {
+      youtubeCookiesPath: "/run/secrets/youtube.cookies.txt",
+    })
+    const premiumTrack = TrackSchema.parse({
+      id: "abc",
+      provider: "youtube",
+      title: "Song",
+      artist: "Artist",
+      url: "https://www.youtube.com/watch?v=abc",
+      durationMs: 42_000,
+    })
+
+    // When
+    await source.resolve(premiumTrack)
+
+    // Then
+    expect(args).toContain("--cookies")
+    expect(args.at(args.indexOf("--cookies") + 1)).toBe("/run/secrets/youtube.cookies.txt")
   })
 })

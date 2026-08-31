@@ -59,7 +59,14 @@ export async function runProduction(
     random: secureRandom,
   })
   const settings = persistence.settings.get(guildId)
-  const source = new PrioritizedMusicSource(new MockTidalMusicSource(), new YouTubeMusicSource(), {
+  const youtube = new YouTubeMusicSource(
+    undefined,
+    undefined,
+    config.youtubeCookiesPath === undefined
+      ? {}
+      : { youtubeCookiesPath: config.youtubeCookiesPath },
+  )
+  const source = new PrioritizedMusicSource(new MockTidalMusicSource(), youtube, {
     preference: settings.sourcePreference,
     mockTidalConnected: settings.mockTidalConnected,
   })

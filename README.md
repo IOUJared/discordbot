@@ -42,6 +42,13 @@ YouTube playback is implemented through the unofficial `yt-dlp` extractor. YouTu
 without notice; keep `yt-dlp` current and expect occasional extractor breakage. Automated tests
 use deterministic fakes and never contact YouTube.
 
+Optional authenticated YouTube playback accepts a Netscape-format cookie file through
+`YOUTUBE_COOKIES_PATH`. For Docker Compose, place the file at
+`./secrets/youtube.cookies.txt`, set
+`YOUTUBE_COOKIES_PATH=/run/secrets/discord-music/youtube.cookies.txt` in `.env`, and keep the file
+read-only and outside Git. The cookie file grants account access and must be protected like a
+password.
+
 ## Mock TIDAL simulator
 
 The dashboard Settings view includes a classroom-safe **Mock TIDAL** provider. Connecting it

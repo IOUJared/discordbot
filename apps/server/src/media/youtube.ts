@@ -72,6 +72,7 @@ type YouTubeMusicSourceOptions = {
   readonly now?: () => number
   readonly searchCacheTtlMs?: number
   readonly searchCacheCapacity?: number
+  readonly youtubeCookiesPath?: string
 }
 
 type SearchCacheEntry = {
@@ -158,6 +159,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
   private readonly now: () => number
   private readonly searchCacheTtlMs: number
   private readonly searchCacheCapacity: number
+  private readonly youtubeCookiesPath: string | undefined
   private readonly searchCache = new Map<string, SearchCacheEntry>()
   private readonly playlistCache = new Map<string, PlaylistCacheEntry>()
 
@@ -169,6 +171,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
     this.now = options.now ?? Date.now
     this.searchCacheTtlMs = options.searchCacheTtlMs ?? defaultSearchCacheTtlMs
     this.searchCacheCapacity = options.searchCacheCapacity ?? defaultSearchCacheCapacity
+    this.youtubeCookiesPath = options.youtubeCookiesPath
   }
 
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
@@ -232,6 +235,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
     const request = {
       file: "yt-dlp",
       args: [
+        ...(this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]),
         "--dump-single-json",
         "--no-playlist",
         "--no-warnings",

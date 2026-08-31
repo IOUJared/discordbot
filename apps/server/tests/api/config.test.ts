@@ -46,6 +46,17 @@ describe("server configuration", () => {
     expect(config.voiceIdleTimeoutMs).toBe(42_000)
   })
 
+  it("Given a YouTube cookies path When parsed Then the secret path is available to media resolution", () => {
+    // Given
+    const input = { ...valid, YOUTUBE_COOKIES_PATH: "/run/secrets/youtube.cookies.txt" }
+
+    // When
+    const config = parseConfig(input)
+
+    // Then
+    expect(config.youtubeCookiesPath).toBe("/run/secrets/youtube.cookies.txt")
+  })
+
   it.each(["0", "1.5", "86401", "not-a-number"])(
     "Given invalid voice idle timeout %s When parsed Then configuration is rejected",
     (voiceIdleTimeout) => {
