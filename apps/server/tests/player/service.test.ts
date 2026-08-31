@@ -193,6 +193,22 @@ describe("PlayerService", () => {
     })
   })
 
+  it("Given active playback When play searches again Then the top result starts immediately", async () => {
+    // Given
+    const { service, voice } = harness()
+    await service.play("first song", userId, channelId)
+
+    // When
+    await service.play("replacement song", userId, channelId)
+
+    // Then
+    expect(service.snapshot()).toMatchObject({
+      currentItem: { id: "generated-1", track: { id: "track-1" } },
+      queue: [],
+    })
+    expect(voice.stops).toBe(1)
+  })
+
   it("tracks position and reuses resolved media when rebuilding on seek/restart", async () => {
     // Given
     const { clock, resources, service, source } = harness()

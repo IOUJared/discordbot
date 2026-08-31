@@ -68,7 +68,8 @@ export class PlayerService extends QueueControls {
     if (first === undefined) throw new RangeError("No tracks matched the query")
     await this.join(channelId)
     const item = await this.enqueue(first.track, requestedBy)
-    await this.startIfIdle()
+    if (this.playback.current === null) await this.startIfIdle()
+    else await this.playSelected(item.id)
     return item
   }
 
