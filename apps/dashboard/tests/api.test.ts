@@ -6,7 +6,7 @@ import {
 } from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
 
-import { createApi } from "../src/lib/services/api.js"
+import { createApi, playlistRequestTimeoutMs } from "../src/lib/services/api.js"
 
 const state = PlayerStateSchema.parse({
   version: 7,
@@ -72,6 +72,17 @@ function createRecorder() {
 }
 
 describe("dashboard API wire contract", () => {
+  it("Given playlist extraction When the dashboard waits Then its timeout exceeds the server process window", () => {
+    // Given
+    const serverProcessTimeoutMs = 20_000
+
+    // When
+    const timeoutMs = playlistRequestTimeoutMs
+
+    // Then
+    expect(timeoutMs).toBeGreaterThan(serverProcessTimeoutMs)
+  })
+
   it("Given a YouTube playlist URL When previewing and importing Then both requests preserve the URL and queue version", async () => {
     // Given
     const recorder = createRecorder()

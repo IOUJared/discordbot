@@ -21,6 +21,7 @@ import {
 } from "$lib/domain/schemas.js"
 
 export type VoiceChannel = Readonly<z.infer<typeof ChannelsSchema>["channels"][number]>
+export const playlistRequestTimeoutMs = 30_000
 
 export class DashboardApiError extends Error {
   readonly name = "DashboardApiError"
@@ -81,7 +82,13 @@ export function createApi(
         (value) => value.results,
       ),
     previewPlaylist: (url: string) =>
-      json(client.post("api/playlists/preview", { json: { url } }), YouTubePlaylistSchema),
+      json(
+        client.post("api/playlists/preview", {
+          json: { url },
+          timeout: playlistRequestTimeoutMs,
+        }),
+        YouTubePlaylistSchema,
+      ),
     importPlaylist: (url: string, expectedVersion: number, channelId?: string) =>
       json(
         client.post("api/queue/playlist", {
@@ -89,6 +96,7 @@ export function createApi(
             channelId === undefined
               ? { url, expectedVersion }
               : { url, channelId, expectedVersion },
+          timeout: playlistRequestTimeoutMs,
         }),
         PlaylistImportResultSchema,
       ),
