@@ -166,8 +166,13 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()))
 })
 
-async function fixture(): Promise<{ readonly app: FastifyInstance; readonly player: FakePlayer }> {
+async function fixture(): Promise<{
+  readonly app: FastifyInstance
+  readonly player: FakePlayer
+  readonly playlistSignals: readonly (AbortSignal | undefined)[]
+}> {
   const player = new FakePlayer()
+  const playlistSignals: (AbortSignal | undefined)[] = []
   const deps: AppDeps = {
     config: {
       discordToken: "secret",
@@ -207,12 +212,15 @@ async function fixture(): Promise<{ readonly app: FastifyInstance; readonly play
     player,
     search: {
       search: async () => [],
-      playlist: async () => ({
-        id: "PL-list",
-        title: "Road trip",
-        author: "Jared",
-        tracks: [track],
-      }),
+      playlist: async (_url, signal) => {
+        playlistSignals.push(signal)
+        return {
+          id: "PL-list",
+          title: "Road trip",
+          author: "Jared",
+          tracks: [track],
+        }
+      },
     },
     guildId,
     history: { list: () => [] },
@@ -223,13 +231,13 @@ async function fixture(): Promise<{ readonly app: FastifyInstance; readonly play
   }
   const app = await buildApp(deps)
   apps.push(app)
-  return { app, player }
+  return { app, player, playlistSignals }
 }
 
 describe("Fastify API", () => {
   it("Given a playlist URL When it is previewed Then ordered metadata is returned", async () => {
     // Given
-    const { app } = await fixture()
+    const { app, playlistSignals } = await fixture()
 
     // When
     const response = await app.inject({
@@ -242,11 +250,12 @@ describe("Fastify API", () => {
     // Then
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ title: "Road trip", tracks: [{ id: "track" }] })
+    expect(playlistSignals).toEqual([undefined])
   })
 
   it("Given a current queue version When a playlist is imported Then all tracks enqueue before playback starts", async () => {
     // Given
-    const { app, player } = await fixture()
+    const { app, player, playlistSignals } = await fixture()
 
     // When
     const response = await app.inject({
@@ -264,6 +273,7 @@ describe("Fastify API", () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ importedCount: 1, state: { version: 1 } })
     expect(player.calls).toEqual(["join", "enqueue-many", "start"])
+    expect(playlistSignals).toEqual([undefined])
   })
 
   it("Given a health request When unauthenticated Then only public readiness fields are returned", async () => {

@@ -39,7 +39,7 @@ export function registerQueueRoutes(
     const session = authorize(request, deps.sessions)
     const input = playlistImportSchema.parse(request.body)
     requireCurrentVersion(input.expectedVersion, deps.snapshots)
-    const playlist = await deps.search.playlist(input.url, request.signal)
+    const playlist = await deps.search.playlist(input.url)
     if (!deps.player.voiceStatus().connected) {
       if (input.channelId === undefined) {
         throw new ApiError(400, "voice_channel_required", "Choose a voice channel")

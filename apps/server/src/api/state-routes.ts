@@ -35,6 +35,6 @@ export function registerStateRoutes(app: FastifyInstance, deps: StateRouteDeps):
   app.post("/api/playlists/preview", async (request) => {
     authorize(request, deps.sessions)
     const { url } = playlistPreviewSchema.parse(request.body)
-    return deps.search.playlist(url, request.signal)
+    return deps.search.playlist(url)
   })
 }
