@@ -1,7 +1,10 @@
-import { ChannelIdSchema, GuildIdSchema } from "@discord-music/contracts"
-import { VoiceConnectionStatus } from "@discordjs/voice"
+import { PassThrough } from "node:stream"
+
+import { ChannelIdSchema, GuildIdSchema, VolumeSchema } from "@discord-music/contracts"
+import { createAudioResource, StreamType, VoiceConnectionStatus } from "@discordjs/voice"
 import { describe, expect, it } from "vitest"
 
+import { DiscordVoiceResource } from "../../src/discord/resource-factory.js"
 import {
   DiscordVoiceGateway,
   type ManagedVoiceConnection,
@@ -41,6 +44,26 @@ class ReadyGate {
 const adapterForGuild = () => () => ({ sendPayload: () => true, destroy: () => undefined })
 
 describe("DiscordVoiceGateway lifecycle", () => {
+  it("Given a selected volume When a new resource starts Then it begins at that volume", () => {
+    // Given
+    const gateway = new DiscordVoiceGateway({ adapterForGuild })
+    const input = new PassThrough()
+    const audioResource = createAudioResource(input, {
+      inputType: StreamType.OggOpus,
+      inlineVolume: true,
+    })
+    const resource = new DiscordVoiceResource(audioResource, () => input.destroy())
+    gateway.setVolume(VolumeSchema.parse(31))
+
+    // When
+    gateway.play(resource, { finished: async () => undefined, failed: async () => undefined })
+
+    // Then
+    expect(audioResource.volume?.volume).toBeCloseTo(0.31)
+    gateway.stop()
+    resource.dispose()
+  })
+
   it("does not resolve join until the connection reaches Ready", async () => {
     // Given
     const connection = new FakeConnection()

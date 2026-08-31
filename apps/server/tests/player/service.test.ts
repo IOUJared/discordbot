@@ -6,6 +6,7 @@ import {
   type Track,
   TrackIdSchema,
   UserIdSchema,
+  type Volume,
   VolumeSchema,
 } from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
@@ -86,8 +87,10 @@ class FakeVoice implements VoiceGateway {
   callbacks: PlaybackCallbacks | null = null
   connected = false
   pauses = 0
+  readonly resourceVolumes: number[] = []
   resumes = 0
   stops = 0
+  volume = VolumeSchema.parse(100)
   listener: ((event: VoiceStateEvent) => void) | null = null
 
   async join() {
@@ -100,6 +103,7 @@ class FakeVoice implements VoiceGateway {
   }
   play(_resource: AudioResource, callbacks: PlaybackCallbacks) {
     this.callbacks = callbacks
+    this.resourceVolumes.push(this.volume)
   }
   pause() {
     this.pauses += 1
@@ -112,7 +116,11 @@ class FakeVoice implements VoiceGateway {
   stop() {
     this.stops += 1
   }
-  setVolume() {}
+  setVolume(volume: Volume) {
+    this.volume = volume
+    const index = this.resourceVolumes.length - 1
+    if (index >= 0) this.resourceVolumes[index] = volume
+  }
   onStatus(listener: (event: VoiceStateEvent) => void) {
     this.listener = listener
     return () => {
@@ -239,6 +247,20 @@ describe("PlayerService", () => {
       volume: 175,
       loopMode: "queue",
     })
+  })
+
+  it("Given a custom volume When playback advances Then the next resource keeps that volume", async () => {
+    // Given
+    const { service, voice } = harness()
+    await service.enqueueMany([trackOne, track(2)], userId)
+    await service.startIfIdle()
+    service.setVolume(VolumeSchema.parse(31))
+
+    // When
+    await voice.callbacks?.finished()
+
+    // Then
+    expect(voice.resourceVolumes).toEqual([31, 31])
   })
 
   it("connects the mock TIDAL simulator and persists provider priority", () => {

@@ -1,4 +1,4 @@
-import type { ChannelId, GuildId, Volume } from "@discord-music/contracts"
+import { type ChannelId, type GuildId, type Volume, VolumeSchema } from "@discord-music/contracts"
 import {
   type AudioPlayer,
   AudioPlayerStatus,
@@ -94,6 +94,7 @@ export class DiscordVoiceGateway implements VoiceGateway {
   private connection: ManagedVoiceConnection | null = null
   private callbacks: PlaybackCallbacks | null = null
   private activeResource: DiscordVoiceResource | null = null
+  private volume = VolumeSchema.parse(100)
   private reconnects = 0
 
   constructor(private readonly options: VoiceGatewayOptions) {
@@ -144,6 +145,7 @@ export class DiscordVoiceGateway implements VoiceGateway {
     if (!(resource instanceof DiscordVoiceResource)) throw new InvalidAudioResourceError()
     this.callbacks = callbacks
     this.activeResource = resource
+    resource.audioResource.volume?.setVolume(this.volume / 100)
     this.player.play(resource.audioResource)
   }
 
@@ -159,6 +161,7 @@ export class DiscordVoiceGateway implements VoiceGateway {
     this.player.stop(true)
   }
   setVolume(volume: Volume): void {
+    this.volume = volume
     this.activeResource?.audioResource.volume?.setVolume(volume / 100)
   }
 
