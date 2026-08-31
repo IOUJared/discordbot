@@ -51,6 +51,11 @@ export async function runProduction(
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
   })
+  const voiceChannelListeners = new Set<() => void>()
+  client.on("voiceStateUpdate", (previous, current) => {
+    if (previous.guild.id !== guildId && current.guild.id !== guildId) return
+    for (const listener of voiceChannelListeners) listener()
+  })
   const persistence = openPersistence({
     path: config.databasePath,
     clock: systemClock,
@@ -98,7 +103,11 @@ export async function runProduction(
     search: source,
     guildId,
     history: persistence.history,
-    voiceChannels: async () => voiceChannels(await fetchGuild(client, guildId)),
+    voiceChannels: async () => voiceChannels(requireGuild(client, guildId)),
+    onVoiceChannelsChanged: (listener) => {
+      voiceChannelListeners.add(listener)
+      return () => voiceChannelListeners.delete(listener)
+    },
     dependencies: checkedDependencies,
     discordReady: () => client.isReady(),
     startedAtMs: Date.now(),
@@ -146,15 +155,8 @@ function requireGuild(client: Client, guildId: string): Guild {
   return guild
 }
 
-async function fetchGuild(client: Client, guildId: string): Promise<Guild> {
-  const guild = await client.guilds.fetch(guildId)
-  if (guild === undefined) throw new GuildUnavailableError(guildId)
-  return guild
-}
-
-async function voiceChannels(guild: Guild) {
-  const channels = await guild.channels.fetch()
-  return channels
+function voiceChannels(guild: Guild) {
+  return guild.channels.cache
     .filter(
       (channel): channel is VoiceBasedChannel =>
         channel !== null &&

@@ -91,9 +91,22 @@ export const PlaybackFailureMessageSchema = z.strictObject({
   }),
 })
 
+const VoiceChannelSchema = z.strictObject({
+  id: identifier,
+  name: identifier,
+  memberCount: z.int().check(z.nonnegative()),
+})
+
+export const VoiceChannelsMessageSchema = z.strictObject({
+  version: z.literal(1),
+  type: z.literal("voice.channels"),
+  payload: z.strictObject({ channels: z.readonly(z.array(VoiceChannelSchema)) }),
+})
+
 export const SocketMessageSchema = z.discriminatedUnion("type", [
   PlayerStateMessageSchema,
   PlaybackFailureMessageSchema,
+  VoiceChannelsMessageSchema,
 ])
 
 export const HistoryItemSchema = z.strictObject({
@@ -112,15 +125,7 @@ export const ApiErrorSchema = z.strictObject({
 })
 
 export const ChannelsSchema = z.strictObject({
-  channels: z.readonly(
-    z.array(
-      z.strictObject({
-        id: identifier,
-        name: identifier,
-        memberCount: z.int().check(z.nonnegative()),
-      }),
-    ),
-  ),
+  channels: z.readonly(z.array(VoiceChannelSchema)),
 })
 
 export const ResultsSchema = z.strictObject({ results: z.readonly(z.array(SearchResultSchema)) })

@@ -51,6 +51,16 @@ describe("state derivation", () => {
     expect(parseSocketMessage(message)).toMatchObject({ success: true, data: message })
   })
 
+  it("Given a voice membership websocket event When parsed Then live channel counts are accepted", () => {
+    const message = {
+      version: 1,
+      type: "voice.channels",
+      payload: { channels: [{ id: "voice-1", name: "General", memberCount: 4 }] },
+    }
+
+    expect(parseSocketMessage(message)).toMatchObject({ success: true, data: message })
+  })
+
   it("Given disconnected voice and no selection When adding Then a channel is required", () => {
     expect(requireVoiceSelection(false, "")).toBe(false)
   })

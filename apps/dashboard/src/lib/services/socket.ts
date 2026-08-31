@@ -1,6 +1,7 @@
 import type { PlaybackFailureNotification, PlayerState } from "@discord-music/contracts"
 import { nextReconnectDelay } from "../domain/playback.js"
 import { SocketMessageSchema } from "../domain/schemas.js"
+import type { VoiceChannel } from "./api.js"
 
 export type SocketStatus = "connecting" | "connected" | "reconnecting" | "disconnected"
 type Options = {
@@ -9,6 +10,7 @@ type Options = {
   readonly onState: (state: PlayerState) => void
   readonly onStatus: (status: SocketStatus) => void
   readonly onFailure: (failure: PlaybackFailureNotification) => void
+  readonly onChannels: (channels: readonly VoiceChannel[]) => void
   readonly refresh: () => Promise<void>
   readonly random?: () => number
 }
@@ -44,6 +46,9 @@ export function connectSnapshotSocket(options: Options): () => void {
           return
         case "playback.failed":
           options.onFailure(parsed.data.payload)
+          return
+        case "voice.channels":
+          options.onChannels(parsed.data.payload.channels)
           return
       }
     })

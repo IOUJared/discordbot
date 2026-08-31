@@ -153,9 +153,11 @@ async function fixture(): Promise<{
   readonly app: FastifyInstance
   readonly player: FakePlayer
   readonly playlistSignals: readonly (AbortSignal | undefined)[]
+  readonly emitVoiceChannelsChanged: () => void
 }> {
   const player = new FakePlayer()
   const playlistSignals: (AbortSignal | undefined)[] = []
+  const voiceChannelListeners = new Set<() => void>()
   const deps: AppDeps = {
     config: {
       discordToken: "secret",
@@ -208,13 +210,24 @@ async function fixture(): Promise<{
     guildId,
     history: { list: () => [] },
     voiceChannels: async () => [{ id: channelId, name: "General", memberCount: 3 }],
+    onVoiceChannelsChanged: (listener) => {
+      voiceChannelListeners.add(listener)
+      return () => voiceChannelListeners.delete(listener)
+    },
     dependencies: { ffmpeg: true, ytDlp: true },
     discordReady: () => true,
     startedAtMs: Date.now(),
   }
   const app = await buildApp(deps)
   apps.push(app)
-  return { app, player, playlistSignals }
+  return {
+    app,
+    player,
+    playlistSignals,
+    emitVoiceChannelsChanged: () => {
+      for (const listener of voiceChannelListeners) listener()
+    },
+  }
 }
 
 describe("Fastify API", () => {
@@ -518,6 +531,33 @@ describe("Fastify API", () => {
     socket.close()
     expect(first.type).toBe("state.snapshot")
     expect(second.payload.version).toBeGreaterThan(first.payload.version)
+  })
+
+  it("Given Discord voice membership changes When connected Then fresh channel counts arrive", async () => {
+    const { app, emitVoiceChannelsChanged } = await fixture()
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const socket = new WebSocket(`${address.replace("http", "ws")}/ws`, {
+      origin: "https://music.example.com",
+    })
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", () => {
+        socket.send(JSON.stringify({ type: "auth", token: "valid" }))
+        resolve()
+      })
+      socket.once("error", reject)
+    })
+    await nextMessage(socket)
+
+    const update = nextRawMessage(socket)
+    emitVoiceChannelsChanged()
+    const message = await update
+    socket.close()
+
+    expect(message).toEqual({
+      version: 1,
+      type: "voice.channels",
+      payload: { channels: [{ id: channelId, name: "General", memberCount: 3 }] },
+    })
   })
 
   it("Given authenticated WebSocket playback When a track fails Then a versioned safe event arrives", async () => {

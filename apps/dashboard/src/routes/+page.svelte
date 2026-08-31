@@ -113,7 +113,7 @@
   const applyState = (next: PlayerState): void => { snapshot = next; observedAt = Date.now(); displayPosition = next.player.positionMs; error = null }
   const refresh = async (): Promise<void> => { applyState(await api.state()) }
   const explain = (caught: unknown): string => caught instanceof DashboardApiError ? caught.message : caught instanceof Error ? caught.message : "The request failed. Try again."
-  const beginSocket = (): void => { if (session === null) return; disconnect?.(); disconnect = connectSnapshotSocket({ url: wsUrl, token: session.token, onState: applyState, onFailure: (failure) => { playbackFailure = failure }, onStatus: (status) => { socketStatus = status }, refresh }) }
+  const beginSocket = (): void => { if (session === null) return; disconnect?.(); disconnect = connectSnapshotSocket({ url: wsUrl, token: session.token, onState: applyState, onChannels: (next) => { channels = next }, onFailure: (failure) => { playbackFailure = failure }, onStatus: (status) => { socketStatus = status }, refresh }) }
   const containQueueFocus = (event: KeyboardEvent): void => {
     if (event.key === "Escape" && queueOpen) { queueOpen = false; return }
     if (event.key !== "Tab" || !queueOpen || typeof document === "undefined") return

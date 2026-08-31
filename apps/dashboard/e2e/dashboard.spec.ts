@@ -36,6 +36,23 @@ test("Given disconnected desktop voice When channels load Then each real channel
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toHaveCount(0)
 })
 
+test("Given someone joins a voice channel When Discord emits an update Then its count changes without reload", async ({
+  page,
+}) => {
+  let releaseUpdate = () => undefined
+  const voiceChannelsGate = new Promise<void>((resolve) => {
+    releaseUpdate = resolve
+  })
+  await mockWire(page, { state: emptyRoom, voiceChannelsGate })
+  await page.goto("/#code=live-channel-count")
+  await expect(page.getByRole("button", { name: "Main Room, 2 members" })).toBeVisible()
+
+  releaseUpdate()
+
+  await expect(page.getByRole("button", { name: "Main Room, 3 members" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Main Room, 2 members" })).toHaveCount(0)
+})
+
 for (const width of [375, 768, 1280]) {
   test(`Given bitrate-ranked search results at ${width}px When search completes Then stream quality is visible`, async ({
     page,

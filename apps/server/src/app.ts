@@ -34,6 +34,7 @@ export type AppDeps = {
   readonly guildId: GuildId
   readonly history: { list(guildId: GuildId): readonly HistoryItem[] }
   readonly voiceChannels: () => Promise<readonly VoiceChannel[]>
+  readonly onVoiceChannelsChanged: (listener: () => void) => () => void
   readonly dependencies: DependencyStatus
   readonly discordReady: () => boolean
   readonly startedAtMs?: number
@@ -91,6 +92,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     frontendOrigin: deps.config.frontendOrigin,
     sessions: deps.sessions,
     snapshots,
+    voiceChannels: deps.voiceChannels,
+    onVoiceChannelsChanged: deps.onVoiceChannelsChanged,
   })
   return app
 }

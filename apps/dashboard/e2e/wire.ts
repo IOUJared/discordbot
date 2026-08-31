@@ -62,6 +62,7 @@ export type WireOptions = {
   readonly history?: readonly ReturnType<typeof historyItem>[]
   readonly searchError?: boolean
   readonly failureGate?: Promise<void>
+  readonly voiceChannelsGate?: Promise<void>
   readonly failure?: {
     readonly version: 1
     readonly type: "playback.failed"
@@ -101,6 +102,21 @@ export async function mockWire(page: Page, options: WireOptions = {}): Promise<v
         parsed.type === "auth"
       ) {
         socket.send(JSON.stringify({ version: 1, type: "state.snapshot", payload: state }))
+        if (options.voiceChannelsGate !== undefined) {
+          await options.voiceChannelsGate
+          socket.send(
+            JSON.stringify({
+              version: 1,
+              type: "voice.channels",
+              payload: {
+                channels: [
+                  { id: "voice-1", name: "Main Room", memberCount: 3 },
+                  { id: "voice-2", name: "Lounge", memberCount: 2 },
+                ],
+              },
+            }),
+          )
+        }
         if (options.failure !== undefined && !failureDelivered) {
           failureDelivered = true
           await options.failureGate
