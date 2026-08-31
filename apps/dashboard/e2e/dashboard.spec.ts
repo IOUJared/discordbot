@@ -53,6 +53,42 @@ test("Given someone joins a voice channel When Discord emits an update Then its 
   await expect(page.getByRole("button", { name: "Main Room, 2 members" })).toHaveCount(0)
 })
 
+test("Given the seek thumb moves repeatedly When it is released Then only the final position is requested", async ({
+  page,
+}) => {
+  const positions: number[] = []
+  await mockWire(page)
+  await page.unroute("**/api/player/seek")
+  await page.route("**/api/player/seek", async (route) => {
+    const payload = route.request().postDataJSON() as { positionMs: number }
+    positions.push(payload.positionMs)
+    await route.fulfill({
+      json: { ...room, player: { ...room.player, positionMs: payload.positionMs } },
+    })
+  })
+  await page.goto("/#code=rapid-seek")
+  const slider = page.getByTestId("seek-control").getByRole("slider")
+
+  await slider.evaluate((input) => {
+    if (!(input instanceof HTMLInputElement)) throw new TypeError("Expected range input")
+    input.value = "30000"
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+    input.value = "60000"
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  expect(positions).toEqual([])
+  await slider.evaluate((input) => {
+    if (!(input instanceof HTMLInputElement)) throw new TypeError("Expected range input")
+    input.value = "30000"
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+    input.value = "60000"
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  })
+
+  await expect.poll(() => positions).toEqual([60_000])
+  await expect(page.getByText("Media does not support seeking")).toHaveCount(0)
+})
+
 for (const width of [375, 768, 1280]) {
   test(`Given bitrate-ranked search results at ${width}px When search completes Then stream quality is visible`, async ({
     page,

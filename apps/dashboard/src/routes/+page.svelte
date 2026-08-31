@@ -106,14 +106,37 @@
   let queueOpen = $state(false)
   let observedAt = $state(Date.now())
   let displayPosition = $state(0)
+  let seekPreviewing = $state(false)
+  let seekSequence = 0
+  let seekTimer: ReturnType<typeof setTimeout> | null = null
   let disconnect: (() => void) | null = null
   const store = typeof sessionStorage === "undefined" ? null : createSessionStore(sessionStorage)
   const api = $derived.by(() => createApi(apiUrl, () => session?.token ?? null))
 
-  const applyState = (next: PlayerState): void => { snapshot = next; observedAt = Date.now(); displayPosition = next.player.positionMs; error = null }
+  const applyState = (next: PlayerState): void => { snapshot = next; observedAt = Date.now(); if (!seekPreviewing) displayPosition = next.player.positionMs; error = null }
   const refresh = async (): Promise<void> => { applyState(await api.state()) }
   const explain = (caught: unknown): string => caught instanceof DashboardApiError ? caught.message : caught instanceof Error ? caught.message : "The request failed. Try again."
   const beginSocket = (): void => { if (session === null) return; disconnect?.(); disconnect = connectSnapshotSocket({ url: wsUrl, token: session.token, onState: applyState, onChannels: (next) => { channels = next }, onFailure: (failure) => { playbackFailure = failure }, onStatus: (status) => { socketStatus = status }, refresh }) }
+  const previewSeek = (value: number): void => { seekPreviewing = true; displayPosition = value }
+  const performSeek = async (value: number, sequence: number): Promise<void> => {
+    try {
+      const next = await api.seek(value)
+      if (sequence === seekSequence) applyState(next)
+    } catch (caught) {
+      if (sequence === seekSequence) error = explain(caught)
+    } finally {
+      if (sequence === seekSequence) seekPreviewing = false
+    }
+  }
+  const seek = (value: number): void => {
+    const sequence = ++seekSequence
+    displayPosition = value
+    if (seekTimer !== null) clearTimeout(seekTimer)
+    seekTimer = setTimeout(() => {
+      seekTimer = null
+      void performSeek(value, sequence)
+    }, 120)
+  }
   const containQueueFocus = (event: KeyboardEvent): void => {
     if (event.key === "Escape" && queueOpen) { queueOpen = false; return }
     if (event.key !== "Tab" || !queueOpen || typeof document === "undefined") return
@@ -171,10 +194,10 @@
       session = fragment.kind === "authenticated" ? fragment.session : store.load()
       if (session === null) { loading = false; return }
       try { const channelsRequest = api.channels(); applyState(await api.state()); loading = false; channels = await channelsRequest; beginSocket() } catch (caught) { error = explain(caught) } finally { loading = false }
-      positionTimer = setInterval(() => { if (snapshot?.player.currentItem === null || snapshot?.player.currentItem === undefined) return; displayPosition = interpolatePosition({ positionMs: snapshot.player.positionMs, durationMs: snapshot.player.currentItem.track.durationMs, paused: snapshot.player.isPaused, observedAtMs: observedAt }, Date.now()) }, 250)
+      positionTimer = setInterval(() => { if (seekPreviewing || snapshot?.player.currentItem === null || snapshot?.player.currentItem === undefined) return; displayPosition = interpolatePosition({ positionMs: snapshot.player.positionMs, durationMs: snapshot.player.currentItem.track.durationMs, paused: snapshot.player.isPaused, observedAtMs: observedAt }, Date.now()) }, 250)
     }
     void start()
-    return () => { disconnect?.(); if (positionTimer !== null) clearInterval(positionTimer) }
+    return () => { disconnect?.(); if (positionTimer !== null) clearInterval(positionTimer); if (seekTimer !== null) clearTimeout(seekTimer) }
   })
 
   async function logout(): Promise<void> { try { await api.logout() } catch (caught) { if (!(caught instanceof DashboardApiError)) throw caught } store?.clear(); disconnect?.(); session = null; snapshot = null }
@@ -272,7 +295,7 @@
   <main id="main" class="main">
     {#if error}<div class="banner" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error=null}><X size={18} aria-hidden="true" /></button></div>{/if}
     <div class="voice desktop-voice"><span class="voice-context">{snapshot.voice.connected ? `Connected to ${connectedChannel?.name ?? "voice"}` : "Choose a voice channel in the sidebar"}</span>{#if snapshot.voice.connected}<Button label="Leave voice" loading={busy} onclick={() => void voiceAction()} />{/if}</div>
-    {#if view === "history"}<HistoryPanel items={history} loading={historyLoading} action={(item,play) => void historyAction(item,play)} />{:else}<NowPlaying player={snapshot.player} position={displayPosition} {busy} command={(name) => void command(name)} seek={(value) => void api.seek(value).then(applyState).catch((caught) => error=explain(caught))} volume={(value) => void api.volume(value).then(applyState).catch((caught) => error=explain(caught))} /><section class="mobile-queue-preview" aria-labelledby="mobile-queue-title"><header><h2 id="mobile-queue-title">Queue <span>{snapshot.player.queue.length}</span></h2><button onclick={() => queueOpen=true}>Review queue</button></header>{#if snapshot.player.queue.length === 0}<p>Queue is empty.</p>{:else}<ol>{#each snapshot.player.queue.slice(0,2) as item}<li><span><strong>{item.track.title}</strong><small>{item.track.artist}</small></span><time>{Math.floor(item.track.durationMs/60_000)}:{Math.floor((item.track.durationMs%60_000)/1_000).toString().padStart(2,"0")}</time></li>{/each}</ol>{/if}</section><SearchPanel results={searchResults} {playlist} loading={searchLoading} importing={playlistImporting} {importedCount} error={searchError} onsearch={(query) => void search(query)} onadd={(result,next) => void add(result,next)} onimport={() => void importPlaylist()} /><details class="mobile-voice"><summary>Voice channel</summary><div class="voice"><label><span class="sr-only">Voice channel</span><select bind:value={selectedChannel} disabled={snapshot.voice.connected}>{#if channels.length===0}<option value="">No channels available</option>{:else}<option value="">Choose a channel</option>{#each channels as channel}<option value={channel.id}>{channel.name} · {channel.memberCount}</option>{/each}{/if}</select></label><Button label={snapshot.voice.connected ? "Leave voice" : "Join voice"} disabled={!snapshot.voice.connected && selectedChannel.length===0} loading={busy} onclick={() => void voiceAction()} /></div></details>{/if}
+    {#if view === "history"}<HistoryPanel items={history} loading={historyLoading} action={(item,play) => void historyAction(item,play)} />{:else}<NowPlaying player={snapshot.player} position={displayPosition} {busy} command={(name) => void command(name)} {previewSeek} {seek} volume={(value) => void api.volume(value).then(applyState).catch((caught) => error=explain(caught))} /><section class="mobile-queue-preview" aria-labelledby="mobile-queue-title"><header><h2 id="mobile-queue-title">Queue <span>{snapshot.player.queue.length}</span></h2><button onclick={() => queueOpen=true}>Review queue</button></header>{#if snapshot.player.queue.length === 0}<p>Queue is empty.</p>{:else}<ol>{#each snapshot.player.queue.slice(0,2) as item}<li><span><strong>{item.track.title}</strong><small>{item.track.artist}</small></span><time>{Math.floor(item.track.durationMs/60_000)}:{Math.floor((item.track.durationMs%60_000)/1_000).toString().padStart(2,"0")}</time></li>{/each}</ol>{/if}</section><SearchPanel results={searchResults} {playlist} loading={searchLoading} importing={playlistImporting} {importedCount} error={searchError} onsearch={(query) => void search(query)} onadd={(result,next) => void add(result,next)} onimport={() => void importPlaylist()} /><details class="mobile-voice"><summary>Voice channel</summary><div class="voice"><label><span class="sr-only">Voice channel</span><select bind:value={selectedChannel} disabled={snapshot.voice.connected}>{#if channels.length===0}<option value="">No channels available</option>{:else}<option value="">Choose a channel</option>{#each channels as channel}<option value={channel.id}>{channel.name} · {channel.memberCount}</option>{/each}{/if}</select></label><Button label={snapshot.voice.connected ? "Leave voice" : "Join voice"} disabled={!snapshot.voice.connected && selectedChannel.length===0} loading={busy} onclick={() => void voiceAction()} /></div></details>{/if}
   </main>
   {#if queueOpen}<button class="queue-backdrop" tabindex="-1" aria-label="Dismiss queue backdrop" onclick={() => queueOpen=false}></button>{/if}
   <aside class:open={queueOpen}><button class="close" aria-label="Close queue" onclick={() => queueOpen=false}><X size={22} aria-hidden="true" /></button><QueuePanel queue={snapshot.player.queue} {pendingId} error={queueError} action={(name,item,index) => void queueAction(name,item,index)} reorder={(item,index) => void reorderQueue(item,index)} /></aside>

@@ -6,7 +6,7 @@
   import Range from "./Range.svelte"
   import TrackTitle from "./TrackTitle.svelte"
   import Transport from "./Transport.svelte"
-  let { player, position, busy, command, seek, volume }: { player: PlayerSnapshot; position: number; busy: boolean; command: (name: string) => void; seek: (value: number) => void; volume: (value: number) => void } = $props()
+  let { player, position, busy, command, previewSeek, seek, volume }: { player: PlayerSnapshot; position: number; busy: boolean; command: (name: string) => void; previewSeek: (value: number) => void; seek: (value: number) => void; volume: (value: number) => void } = $props()
   const time = (ms: number) => `${Math.floor(ms / 60_000)}:${Math.floor((ms % 60_000) / 1_000).toString().padStart(2,"0")}`
 </script>
 <section class="now" aria-labelledby="now-title">
@@ -16,7 +16,7 @@
     <h2 class="panel-title">Now playing</h2>
     <div class="art">{#if player.currentItem.track.artworkUrl}<Artwork src={player.currentItem.track.artworkUrl} alt={`Artwork for ${player.currentItem.track.title}`} priority />{:else}<MusicNotes size={64} weight="duotone" aria-hidden="true" />{/if}</div>
     <div class="meta" data-testid="current-track" data-track-id={player.currentItem.track.id}><p class="eyebrow">Now playing</p><h1 id="now-title" aria-label={player.currentItem.track.title}><TrackTitle title={player.currentItem.track.title} /></h1><p>{player.currentItem.track.artist}</p><div class="source-line"><p class="requested">Requested by {player.currentItem.requestedBy} · {player.currentItem.track.provider}</p>{#if player.bitrateKbps !== null && player.bitrateKbps !== undefined}<span class="quality" aria-label={`Source audio quality: ${player.bitrateKbps} kilobits per second`}><span>Source</span><strong>{player.bitrateKbps} kbps</strong></span>{/if}</div></div>
-    <div class="seek" data-testid="seek-control"><Range label={time(position)} value={Math.round(position)} max={Math.max(1,player.currentItem.track.durationMs)} disabled={!player.seekable} showOutput={false} oninput={seek} /><span>{time(player.currentItem.track.durationMs)}</span>{#if !player.seekable}<small role="status">Seeking unavailable for this source.</small>{/if}</div>
+    <div class="seek" data-testid="seek-control"><Range label={time(position)} value={Math.round(position)} max={Math.max(1,player.currentItem.track.durationMs)} disabled={!player.seekable} showOutput={false} oninput={previewSeek} onchange={seek} /><span>{time(player.currentItem.track.durationMs)}</span>{#if !player.seekable}<small role="status">Seeking unavailable for this source.</small>{/if}</div>
     <Transport paused={player.isPaused} hasCurrent={true} {busy} loopMode={player.loopMode} {command} />
     <div class="volume"><SpeakerHigh size={22} aria-hidden="true" /><Range label="Volume" value={player.volume} max={200} oninput={volume} /></div>
   {/if}

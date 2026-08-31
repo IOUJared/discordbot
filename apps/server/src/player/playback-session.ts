@@ -1,7 +1,7 @@
 import type { BitrateKbps, QueueItem } from "@discord-music/contracts"
 
 import type { Clock } from "../domain/clock.js"
-import type { MusicSource } from "../media/types.js"
+import type { MusicSource, PlayableMedia } from "../media/types.js"
 import type { AudioResource, AudioResourceFactory } from "./ports.js"
 
 type PlaybackStart = {
@@ -20,6 +20,7 @@ export class PlaybackSession {
   private paused = false
   private sourceBitrateKbps: BitrateKbps | null = null
   private resourceSeekable = false
+  private media: PlayableMedia | null = null
   private generation = 0
   private startedAt = ""
 
@@ -42,7 +43,7 @@ export class PlaybackSession {
   }
 
   get seekable(): boolean {
-    return this.item !== null && this.resource !== null && this.resourceSeekable
+    return this.item !== null && this.resourceSeekable
   }
 
   get bitrateKbps(): BitrateKbps | null {
@@ -50,6 +51,7 @@ export class PlaybackSession {
   }
 
   begin(item: QueueItem, offsetMs: number): PlaybackStart {
+    const replacingSameItem = this.item?.id === item.id
     this.abort?.abort()
     const abort = new AbortController()
     this.abort = abort
@@ -61,13 +63,16 @@ export class PlaybackSession {
     this.paused = false
     this.resource?.dispose()
     this.resource = null
-    this.sourceBitrateKbps = null
-    this.resourceSeekable = false
+    if (!replacingSameItem) {
+      this.media = null
+      this.sourceBitrateKbps = null
+      this.resourceSeekable = false
+    }
     return { generation: this.generation, item, offsetMs, signal: abort.signal }
   }
 
   async prepare(start: PlaybackStart): Promise<AudioResource | null> {
-    const media = await this.source.resolve(start.item.track, start.signal)
+    const media = this.media ?? (await this.source.resolve(start.item.track, start.signal))
     if (start.offsetMs > 0 && !media.seekable) {
       throw new RangeError("Media does not support seeking")
     }
@@ -76,6 +81,7 @@ export class PlaybackSession {
       resource.dispose()
       return null
     }
+    this.media = media
     this.resource = resource
     this.sourceBitrateKbps = media.bitrateKbps
     this.resourceSeekable = media.seekable
@@ -113,6 +119,7 @@ export class PlaybackSession {
     this.resource = null
     this.sourceBitrateKbps = null
     this.resourceSeekable = false
+    this.media = null
     this.item = null
     this.basePositionMs = 0
     this.paused = false

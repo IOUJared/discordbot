@@ -122,7 +122,11 @@ class FakeScheduler implements PlayerScheduler {
   }
 }
 
-function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
+function harness(
+  settings?: SettingsPort,
+  voiceIdleTimeoutMs = 300_000,
+  resourceFactory?: AudioResourceFactory,
+) {
   const clock = new FixedClock(new Date("2026-01-01T00:00:00.000Z"))
   const source = new FakeSource()
   const voice = new FakeVoice()
@@ -130,7 +134,7 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
   let sequence = 0
   const resources: number[] = []
   const failures: unknown[] = []
-  const factory: AudioResourceFactory = {
+  const recordingFactory: AudioResourceFactory = {
     create: async (_media, offsetMs) => {
       resources.push(offsetMs)
       return { dispose: () => undefined }
@@ -140,7 +144,7 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
     guildId,
     source,
     voice,
-    resourceFactory: factory,
+    resourceFactory: resourceFactory ?? recordingFactory,
     clock,
     scheduler,
     voiceIdleTimeoutMs,
@@ -189,7 +193,7 @@ describe("PlayerService", () => {
     })
   })
 
-  it("tracks pause/resume position and rebuilds a fresh resource on seek/restart", async () => {
+  it("tracks position and reuses resolved media when rebuilding on seek/restart", async () => {
     // Given
     const { clock, resources, service, source } = harness()
     await service.join(channelId)
@@ -206,8 +210,42 @@ describe("PlayerService", () => {
 
     // Then
     expect(resources).toEqual([0, 12_000, 0])
-    expect(source.resolveCount).toBe(3)
+    expect(source.resolveCount).toBe(1)
     expect(service.snapshot().positionMs).toBe(0)
+  })
+
+  it("keeps seeking available while a newer same-track seek supersedes preparation", async () => {
+    // Given
+    const resources: number[] = []
+    const releases: (() => void)[] = []
+    const factory: AudioResourceFactory = {
+      create: async (_media, offsetMs) => {
+        resources.push(offsetMs)
+        if (offsetMs > 0) {
+          await new Promise<void>((resolve) => releases.push(resolve))
+        }
+        return { dispose: () => undefined }
+      },
+    }
+    const { service } = harness(undefined, 300_000, factory)
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+
+    // When
+    const first = service.seek(12_000)
+    await Promise.resolve()
+    const whilePreparing = service.snapshot().seekable
+    const second = service.seek(24_000)
+    await Promise.resolve()
+    releases[0]?.()
+    await first
+    releases[1]?.()
+    await second
+
+    // Then
+    expect(whilePreparing).toBe(true)
+    expect(resources).toEqual([0, 12_000, 24_000])
+    expect(service.snapshot()).toMatchObject({ seekable: true, positionMs: 24_000 })
   })
 
   it("applies volume and queue-loop transitions", async () => {
