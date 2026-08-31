@@ -1,9 +1,4 @@
-import type {
-  BitrateKbps,
-  SearchResult,
-  Track,
-  YouTubePlaylist,
-} from "@discord-music/contracts"
+import type { BitrateKbps, SearchResult, Track, YouTubePlaylist } from "@discord-music/contracts"
 import type { RemoteMediaUrl } from "./media-url-policy.js"
 
 type MediaMetadata = {

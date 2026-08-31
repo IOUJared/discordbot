@@ -139,5 +139,4 @@ describe("dashboard API wire contract", () => {
       { expectedVersion: 7 },
     ])
   })
-
 })

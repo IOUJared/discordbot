@@ -44,14 +44,14 @@ const canonicalYouTubeUrl = z
   .regex(/^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{1,128}$/u)
 export const TrackSchema = z
   .object({
-      id: TrackIdSchema,
-      provider: z.literal("youtube"),
-      title: z.string().trim().min(1).max(512),
-      artist: z.string().trim().min(1).max(512),
-      url: canonicalYouTubeUrl,
-      durationMs: DurationMsSchema,
-      artworkUrl: z.string().url().optional(),
-    })
+    id: TrackIdSchema,
+    provider: z.literal("youtube"),
+    title: z.string().trim().min(1).max(512),
+    artist: z.string().trim().min(1).max(512),
+    url: canonicalYouTubeUrl,
+    durationMs: DurationMsSchema,
+    artworkUrl: z.string().url().optional(),
+  })
   .strict()
 
 export type Track = Readonly<z.infer<typeof TrackSchema>>

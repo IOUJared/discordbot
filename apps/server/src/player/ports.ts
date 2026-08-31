@@ -1,10 +1,4 @@
-import type {
-  ChannelId,
-  GuildId,
-  HistoryItem,
-  LoopMode,
-  Volume,
-} from "@discord-music/contracts"
+import type { ChannelId, GuildId, HistoryItem, LoopMode, Volume } from "@discord-music/contracts"
 
 import type { PlayableMedia } from "../media/types.js"
 

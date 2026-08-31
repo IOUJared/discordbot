@@ -64,11 +64,6 @@ export class SettingsRepository {
           loop_mode = excluded.loop_mode,
           updated_at_ms = excluded.updated_at_ms
       `)
-      .run(
-        parsedGuildId,
-        parsedVolume,
-        parsedLoopMode,
-        this.clock.now().getTime(),
-      )
+      .run(parsedGuildId, parsedVolume, parsedLoopMode, this.clock.now().getTime())
   }
 }
