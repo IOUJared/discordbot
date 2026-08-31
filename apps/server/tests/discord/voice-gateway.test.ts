@@ -49,7 +49,7 @@ describe("DiscordVoiceGateway lifecycle", () => {
     const gateway = new DiscordVoiceGateway({ adapterForGuild })
     const input = new PassThrough()
     const audioResource = createAudioResource(input, {
-      inputType: StreamType.OggOpus,
+      inputType: StreamType.Raw,
       inlineVolume: true,
     })
     const resource = new DiscordVoiceResource(audioResource, () => input.destroy())
