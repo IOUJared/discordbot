@@ -3,6 +3,7 @@ import type {
   MediaSourcePreference,
   SearchResult,
   Track,
+  YouTubePlaylist,
 } from "@discord-music/contracts"
 import type { RemoteMediaUrl } from "./media-url-policy.js"
 
@@ -23,6 +24,10 @@ export type PlayableMedia = LocalPlayableMedia | RemotePlayableMedia
 export interface MusicSource {
   search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]>
   resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia>
+}
+
+export interface PlaylistSource {
+  playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist>
 }
 
 export interface ProviderController {

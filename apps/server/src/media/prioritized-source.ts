@@ -5,14 +5,14 @@ import {
 } from "@discord-music/contracts"
 
 import type { MockTidalMusicSource } from "./mock-tidal.js"
-import type { MusicSource, PlayableMedia, ProviderController } from "./types.js"
+import type { MusicSource, PlayableMedia, PlaylistSource, ProviderController } from "./types.js"
 
-export class PrioritizedMusicSource implements MusicSource, ProviderController {
+export class PrioritizedMusicSource implements MusicSource, PlaylistSource, ProviderController {
   private currentSettings: MediaProviderSettings
 
   constructor(
     private readonly mockTidal: MockTidalMusicSource,
-    private readonly fallback: MusicSource,
+    private readonly fallback: MusicSource & PlaylistSource,
     settings: MediaProviderSettings,
   ) {
     this.currentSettings = MediaProviderSettingsSchema.parse(settings)
@@ -36,6 +36,10 @@ export class PrioritizedMusicSource implements MusicSource, ProviderController {
     return track.provider === "mock_tidal"
       ? this.mockTidal.resolve(track, signal)
       : this.fallback.resolve(track, signal)
+  }
+
+  playlist(url: string, signal?: AbortSignal) {
+    return this.fallback.playlist(url, signal)
   }
 
   settings(): MediaProviderSettings {

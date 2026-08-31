@@ -166,6 +166,26 @@ function harness(settings?: SettingsPort, voiceIdleTimeoutMs = 300_000) {
 }
 
 describe("PlayerService", () => {
+  it("Given an ordered playlist When it is enqueued Then one state change contains every track in order", async () => {
+    // Given
+    const { service } = harness()
+    let changes = 0
+    service.onStateChange(() => {
+      changes += 1
+    })
+
+    // When
+    await service.enqueueMany([track(1), track(2), track(3)], userId)
+
+    // Then
+    expect(service.snapshot().queue.map((item) => item.track.id)).toEqual([
+      "track-1",
+      "track-2",
+      "track-3",
+    ])
+    expect(changes).toBe(1)
+  })
+
   it("auto-joins and starts the first play result while preserving distinct request IDs", async () => {
     // Given
     const { service } = harness()

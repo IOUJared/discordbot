@@ -1,8 +1,9 @@
 <script lang="ts">
   import SpinnerGap from "phosphor-svelte/lib/SpinnerGap"
 
-  let { label, variant = "secondary", disabled = false, loading = false, pressed = false, onclick }: {
+  let { label, ariaLabel, variant = "secondary", disabled = false, loading = false, pressed = false, onclick }: {
     label: string
+    ariaLabel?: string
     variant?: "primary" | "secondary" | "danger"
     disabled?: boolean
     loading?: boolean
@@ -11,7 +12,7 @@
   } = $props()
 </script>
 
-<button class:primary={variant === "primary"} class:danger={variant === "danger"} class:pressed disabled={disabled || loading} aria-busy={loading} {onclick}>
+<button class:primary={variant === "primary"} class:danger={variant === "danger"} class:pressed disabled={disabled || loading} aria-busy={loading} aria-label={ariaLabel} {onclick}>
   {#if loading}<span class="spinner"><SpinnerGap size={18} weight="bold" aria-hidden="true" /></span>{/if}
   {label}
 </button>

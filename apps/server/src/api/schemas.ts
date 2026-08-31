@@ -10,6 +10,14 @@ import { z } from "zod"
 
 export const exchangeSchema = z.object({ code: z.string().min(1).max(1024) }).strict()
 export const searchSchema = z.object({ q: z.string().trim().min(1).max(512) }).strict()
+export const playlistPreviewSchema = z.object({ url: z.url().max(2048) }).strict()
+export const playlistImportSchema = z
+  .object({
+    url: z.url().max(2048),
+    channelId: ChannelIdSchema.optional(),
+    expectedVersion: z.number().int().nonnegative(),
+  })
+  .strict()
 export const expectedVersionSchema = z
   .object({ expectedVersion: z.number().int().nonnegative() })
   .strict()

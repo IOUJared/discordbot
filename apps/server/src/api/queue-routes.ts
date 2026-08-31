@@ -3,14 +3,21 @@ import type { FastifyInstance } from "fastify"
 import { authorize, type SessionStore } from "../auth/session-auth.js"
 import type { SnapshotHub } from "../runtime/snapshot-hub.js"
 import { ApiError, StaleVersionError } from "./errors.js"
-import { addSchema, expectedVersionSchema, idParamsSchema, orderSchema } from "./schemas.js"
-import type { PlayerApi } from "./types.js"
+import {
+  addSchema,
+  expectedVersionSchema,
+  idParamsSchema,
+  orderSchema,
+  playlistImportSchema,
+} from "./schemas.js"
+import type { PlayerApi, SearchApi } from "./types.js"
 
 export function registerQueueRoutes(
   app: FastifyInstance,
   deps: {
     readonly sessions: SessionStore
     readonly player: PlayerApi
+    readonly search: SearchApi
     readonly snapshots: SnapshotHub
   },
 ): void {
@@ -27,6 +34,21 @@ export function registerQueueRoutes(
     await deps.player.enqueue(input.track, session.userId)
     await deps.player.startIfIdle()
     return deps.snapshots.changed()
+  })
+  app.post("/api/queue/playlist", async (request) => {
+    const session = authorize(request, deps.sessions)
+    const input = playlistImportSchema.parse(request.body)
+    requireCurrentVersion(input.expectedVersion, deps.snapshots)
+    const playlist = await deps.search.playlist(input.url, request.signal)
+    if (!deps.player.voiceStatus().connected) {
+      if (input.channelId === undefined) {
+        throw new ApiError(400, "voice_channel_required", "Choose a voice channel")
+      }
+      await deps.player.join(input.channelId)
+    }
+    await deps.player.enqueueMany(playlist.tracks, session.userId)
+    await deps.player.startIfIdle()
+    return { state: deps.snapshots.changed(), importedCount: playlist.tracks.length }
   })
   app.delete("/api/queue/:id", async (request) => {
     authorize(request, deps.sessions)

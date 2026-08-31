@@ -1,4 +1,9 @@
-import { PlayerStateSchema, QueueItemIdSchema, TrackSchema } from "@discord-music/contracts"
+import {
+  PlayerStateSchema,
+  QueueItemIdSchema,
+  TrackSchema,
+  YouTubePlaylistSchema,
+} from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
 
 import { createApi } from "../src/lib/services/api.js"
@@ -46,7 +51,18 @@ function createRecorder() {
       authorization: request.headers.get("authorization"),
       body: request.body === null ? null : await request.json(),
     })
-    const body = request.url.endsWith("/api/search") ? { results: [] } : state
+    const body = request.url.endsWith("/api/search")
+      ? { results: [] }
+      : request.url.endsWith("/api/playlists/preview")
+        ? YouTubePlaylistSchema.parse({
+            id: "PL-list",
+            title: "Road trip",
+            author: "Jared",
+            tracks: [track],
+          })
+        : request.url.endsWith("/api/queue/playlist")
+          ? { state, importedCount: 1 }
+          : state
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -56,6 +72,23 @@ function createRecorder() {
 }
 
 describe("dashboard API wire contract", () => {
+  it("Given a YouTube playlist URL When previewing and importing Then both requests preserve the URL and queue version", async () => {
+    // Given
+    const recorder = createRecorder()
+    const url = "https://www.youtube.com/playlist?list=PL-list"
+
+    // When
+    await recorder.api.previewPlaylist(url)
+    const imported = await recorder.api.importPlaylist(url, 7, "voice-1")
+
+    // Then
+    expect(recorder.requests.map(({ method, body }) => ({ method, body }))).toEqual([
+      { method: "POST", body: { url } },
+      { method: "POST", body: { url, expectedVersion: 7, channelId: "voice-1" } },
+    ])
+    expect(imported.importedCount).toBe(1)
+  })
+
   it("Given a search query When searching Then POST sends the query as JSON with bearer auth", async () => {
     const recorder = createRecorder()
     await recorder.api.search("northern lines")

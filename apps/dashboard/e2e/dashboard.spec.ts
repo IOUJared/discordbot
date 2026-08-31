@@ -541,6 +541,63 @@ for (const width of [375, 768, 1920]) {
 }
 
 for (const width of [375, 768, 1920]) {
+  test(`Given a YouTube playlist at ${width}px When it is previewed and imported Then every video is added in order`, async ({
+    page,
+  }) => {
+    // Given
+    await page.setViewportSize({ width, height: 900 })
+    await mockWire(page)
+    const playlistTracks = [
+      track("playlist-1", "First Light", "Harbor Glass"),
+      track("playlist-2", "Long Way Home", "Paper Atlas"),
+      track("playlist-3", "Night Drive", "Small Hours"),
+      track("playlist-4", "Open Road", "Quiet Atlas"),
+    ]
+    let importBody: unknown = null
+    await page.route("**/api/playlists/preview", async (route) =>
+      route.fulfill({
+        json: {
+          id: "PL-road-trip",
+          title: "Road trip favorites",
+          author: "Jared",
+          artworkUrl: playlistTracks[0]?.artworkUrl,
+          tracks: playlistTracks,
+        },
+      }),
+    )
+    await page.route("**/api/queue/playlist", async (route) => {
+      importBody = route.request().postDataJSON()
+      await route.fulfill({
+        json: { state: { ...room, version: room.version + 1 }, importedCount: 4 },
+      })
+    })
+    await page.goto("/#code=playlist-preview")
+
+    // When
+    const url = "https://www.youtube.com/playlist?list=PL-road-trip"
+    await page.getByPlaceholder("Song, artist, or YouTube link").fill(url)
+    await page.getByRole("button", { name: "Search", exact: true }).click()
+
+    // Then
+    const preview = page.getByTestId("playlist-preview")
+    await expect(preview).toContainText("Road trip favorites")
+    await expect(preview).toContainText("4 videos")
+    await expect(preview.getByRole("listitem")).toHaveCount(3)
+    await preview.scrollIntoViewIfNeeded()
+    await page.screenshot({
+      path: `../../.omo/evidence/playlist-import/preview-${width}.png`,
+    })
+    await preview
+      .getByRole("button", { name: "Add all 4 videos from Road trip favorites to queue" })
+      .click()
+    await expect(
+      preview.getByRole("button", { name: "Added 4 videos from Road trip favorites to queue" }),
+    ).toBeDisabled()
+    expect(importBody).toEqual({ url, expectedVersion: room.version })
+  })
+}
+
+for (const width of [375, 768, 1920]) {
   test(`Given five search matches at ${width}px When Search more is pressed Then the remaining results are revealed`, async ({
     page,
   }) => {

@@ -3,6 +3,7 @@ import {
   type SearchResult,
   type Track,
   TrackSchema,
+  type YouTubePlaylist,
 } from "@discord-music/contracts"
 import { z } from "zod"
 
@@ -12,7 +13,20 @@ import {
   remoteMediaPolicy,
 } from "./media-url-policy.js"
 import { nodeProcessExecutor } from "./process-executor.js"
-import type { MusicSource, PlayableMedia, ProcessExecutor, RemotePlayableMedia } from "./types.js"
+import type {
+  MusicSource,
+  PlayableMedia,
+  PlaylistSource,
+  ProcessExecutor,
+  RemotePlayableMedia,
+} from "./types.js"
+import {
+  parsePlaylistOutput,
+  parseYouTubePlaylistUrl,
+  youtubePlaylistArgs,
+} from "./youtube-playlist.js"
+
+export { parsePlaylistOutput, youtubePlaylistArgs } from "./youtube-playlist.js"
 
 const searchEntrySchema = z.object({
   id: z.string().min(1),
@@ -20,7 +34,7 @@ const searchEntrySchema = z.object({
   uploader: z.string().min(1),
   channel_is_verified: z.boolean().nullable().optional(),
   duration: z.number().nonnegative(),
-  thumbnail: z.url().optional(),
+  thumbnail: z.url().nullable().optional(),
 })
 const searchOutputSchema = z.object({ entries: z.array(searchEntrySchema) })
 const safeHttpHeadersSchema = z
@@ -63,6 +77,11 @@ type YouTubeMusicSourceOptions = {
 type SearchCacheEntry = {
   readonly expiresAt: number
   readonly results: readonly SearchResult[]
+}
+
+type PlaylistCacheEntry = {
+  readonly expiresAt: number
+  readonly playlist: YouTubePlaylist
 }
 
 export function youtubeSearchArgs(query: string): readonly string[] {
@@ -135,11 +154,12 @@ export function parseResolvedOutput(output: string): RemotePlayableMedia {
   }
 }
 
-export class YouTubeMusicSource implements MusicSource {
+export class YouTubeMusicSource implements MusicSource, PlaylistSource {
   private readonly now: () => number
   private readonly searchCacheTtlMs: number
   private readonly searchCacheCapacity: number
   private readonly searchCache = new Map<string, SearchCacheEntry>()
+  private readonly playlistCache = new Map<string, PlaylistCacheEntry>()
 
   constructor(
     private readonly executor: ProcessExecutor = nodeProcessExecutor,
@@ -178,6 +198,30 @@ export class YouTubeMusicSource implements MusicSource {
       results,
     })
     return results
+  }
+
+  async playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist> {
+    const parsedUrl = parseYouTubePlaylistUrl(url)
+    const cacheKey = parsedUrl.toString()
+    const cached = this.playlistCache.get(cacheKey)
+    if (cached !== undefined && cached.expiresAt > this.now()) return cached.playlist
+    this.playlistCache.delete(cacheKey)
+    const result = await this.executor.run({
+      file: "yt-dlp",
+      args: youtubePlaylistArgs(parsedUrl.toString()),
+      timeoutMs: processTimeoutMs,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const playlist = parsePlaylistOutput(result.stdout)
+    if (this.playlistCache.size >= this.searchCacheCapacity) {
+      const oldest = this.playlistCache.keys().next()
+      if (!oldest.done) this.playlistCache.delete(oldest.value)
+    }
+    this.playlistCache.set(cacheKey, {
+      expiresAt: this.now() + this.searchCacheTtlMs,
+      playlist,
+    })
+    return playlist
   }
 
   async resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {

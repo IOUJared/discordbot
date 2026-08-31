@@ -14,8 +14,10 @@ import {
   ChannelsSchema,
   HistorySchema,
   PlayerStateSchema,
+  PlaylistImportResultSchema,
   ResultsSchema,
   SessionSchema,
+  YouTubePlaylistSchema,
 } from "$lib/domain/schemas.js"
 
 export type VoiceChannel = Readonly<z.infer<typeof ChannelsSchema>["channels"][number]>
@@ -77,6 +79,18 @@ export function createApi(
     search: (query: string): Promise<readonly SearchResult[]> =>
       json(client.post("api/search", { json: { q: query } }), ResultsSchema).then(
         (value) => value.results,
+      ),
+    previewPlaylist: (url: string) =>
+      json(client.post("api/playlists/preview", { json: { url } }), YouTubePlaylistSchema),
+    importPlaylist: (url: string, expectedVersion: number, channelId?: string) =>
+      json(
+        client.post("api/queue/playlist", {
+          json:
+            channelId === undefined
+              ? { url, expectedVersion }
+              : { url, channelId, expectedVersion },
+        }),
+        PlaylistImportResultSchema,
       ),
     command: stateMutation,
     add: (track: Track, expectedVersion: number, channelId?: string) =>

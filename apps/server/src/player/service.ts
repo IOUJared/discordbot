@@ -80,15 +80,22 @@ export class PlayerService extends QueueControls {
   }
 
   async enqueue(track: Track, requestedBy: UserId): Promise<QueueItem> {
-    const item: QueueItem = {
+    const [item] = await this.enqueueMany([track], requestedBy)
+    if (item === undefined) throw new RangeError("At least one track is required")
+    return item
+  }
+
+  async enqueueMany(tracks: readonly Track[], requestedBy: UserId): Promise<readonly QueueItem[]> {
+    if (tracks.length === 0) throw new RangeError("At least one track is required")
+    const items = tracks.map((track) => ({
       id: QueueItemIdSchema.parse(this.options.nextId()),
       track,
       requestedBy,
       addedAt: TimestampSchema.parse(this.options.clock.now().toISOString()),
-    }
-    this.queue.push(item)
+    }))
+    for (const item of items) this.queue.push(item)
     this.emitState()
-    return item
+    return items
   }
 
   async startIfIdle(): Promise<void> {

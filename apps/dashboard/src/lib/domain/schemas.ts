@@ -67,6 +67,10 @@ export const PlayerStateSchema = z.strictObject({
     mockTidalConnected: z.boolean(),
   }),
 })
+export const PlaylistImportResultSchema = z.strictObject({
+  state: PlayerStateSchema,
+  importedCount: z.int().check(z.positive(), z.maximum(500)),
+})
 
 export const PlayerStateMessageSchema = z.strictObject({
   version: z.literal(1),
@@ -121,4 +125,11 @@ export const ChannelsSchema = z.strictObject({
 })
 
 export const ResultsSchema = z.strictObject({ results: z.readonly(z.array(SearchResultSchema)) })
+export const YouTubePlaylistSchema = z.strictObject({
+  id: identifier,
+  title: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  author: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  artworkUrl: z.optional(z.url()),
+  tracks: z.readonly(z.array(TrackSchema).check(z.minLength(1), z.maxLength(500))),
+})
 export const HistorySchema = z.strictObject({ items: z.readonly(z.array(HistoryItemSchema)) })

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { HistoryItem, LoopMode, MediaSourcePreference, PlaybackFailureNotification, PlayerState, QueueItem, SearchResult } from "@discord-music/contracts"
+  import type { HistoryItem, LoopMode, MediaSourcePreference, PlaybackFailureNotification, PlayerState, QueueItem, SearchResult, YouTubePlaylist } from "@discord-music/contracts"
   import { onMount, tick } from "svelte"
   import { base } from "$app/paths"
   import List from "phosphor-svelte/lib/List"
@@ -89,6 +89,10 @@
     channels.find((channel) => channel.id === snapshot?.voice.channelId) ?? null,
   )
   let searchResults = $state<readonly SearchResult[]>([])
+  let playlist = $state<YouTubePlaylist | null>(null)
+  let playlistUrl = $state("")
+  let playlistImporting = $state(false)
+  let importedCount = $state<number | null>(null)
   let history = $state<readonly HistoryItem[]>([])
   let view = $state<"player" | "history" | "settings">("player")
   let socketStatus = $state<SocketStatus>("disconnected")
@@ -185,7 +189,36 @@
       else applyState(await api.command(`api/player/${name}`))
     } catch (caught) { error = explain(caught) } finally { busy = false }
   }
-  async function search(query: string): Promise<void> { searchLoading = true; searchError = null; try { searchResults = await api.search(query) } catch (caught) { searchError = explain(caught) } finally { searchLoading = false } }
+  async function search(query: string): Promise<void> {
+    searchLoading = true
+    searchError = null
+    searchResults = []
+    playlist = null
+    importedCount = null
+    try {
+      if (/^https:\/\/(?:www\.|m\.)?youtube\.com\/.*[?&]list=[^&]+/iu.test(query.trim())) {
+        playlistUrl = query.trim()
+        playlist = await api.previewPlaylist(playlistUrl)
+      } else {
+        playlistUrl = ""
+        searchResults = await api.search(query)
+      }
+    } catch (caught) { searchError = explain(caught) } finally { searchLoading = false }
+  }
+  async function importPlaylist(): Promise<void> {
+    if (snapshot === null || playlist === null) return
+    if (!snapshot.voice.connected && selectedChannel.length === 0) { searchError = "Choose a voice channel before adding the playlist."; return }
+    playlistImporting = true
+    searchError = null
+    try {
+      const result = await api.importPlaylist(playlistUrl, snapshot.version, snapshot.voice.connected ? undefined : selectedChannel)
+      applyState(result.state)
+      importedCount = result.importedCount
+    } catch (caught) {
+      if (caught instanceof DashboardApiError && caught.status === 409) await refresh()
+      searchError = explain(caught)
+    } finally { playlistImporting = false }
+  }
   async function add(result: SearchResult, next: boolean): Promise<void> {
     if (snapshot === null) return
     if (!snapshot.voice.connected && selectedChannel.length === 0) { searchError = "Choose a voice channel before adding the first track."; return }
@@ -244,7 +277,7 @@
   <main id="main" class="main">
     {#if error}<div class="banner" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error=null}><X size={18} aria-hidden="true" /></button></div>{/if}
     {#if view !== "settings"}<div class="voice desktop-voice"><span class="voice-context">{snapshot.voice.connected ? `Connected to ${connectedChannel?.name ?? "voice"}` : "Choose a voice channel in the sidebar"}</span>{#if snapshot.voice.connected}<Button label="Leave voice" loading={busy} onclick={() => void voiceAction()} />{/if}</div>{/if}
-    {#if view === "history"}<HistoryPanel items={history} loading={historyLoading} action={(item,play) => void historyAction(item,play)} />{:else if view === "settings"}<ProviderSettings settings={snapshot.providers} {busy} error={providerError} onpreference={(preference) => void setSourcePreference(preference)} onconnection={(connect) => void setMockTidalConnection(connect)} />{:else}<NowPlaying player={snapshot.player} position={displayPosition} {busy} command={(name) => void command(name)} seek={(value) => void api.seek(value).then(applyState).catch((caught) => error=explain(caught))} volume={(value) => void api.volume(value).then(applyState).catch((caught) => error=explain(caught))} /><section class="mobile-queue-preview" aria-labelledby="mobile-queue-title"><header><h2 id="mobile-queue-title">Queue <span>{snapshot.player.queue.length}</span></h2><button onclick={() => queueOpen=true}>Review queue</button></header>{#if snapshot.player.queue.length === 0}<p>Queue is empty.</p>{:else}<ol>{#each snapshot.player.queue.slice(0,2) as item}<li><span><strong>{item.track.title}</strong><small>{item.track.artist}</small></span><time>{Math.floor(item.track.durationMs/60_000)}:{Math.floor((item.track.durationMs%60_000)/1_000).toString().padStart(2,"0")}</time></li>{/each}</ol>{/if}</section><SearchPanel results={searchResults} loading={searchLoading} error={searchError} onsearch={(query) => void search(query)} onadd={(result,next) => void add(result,next)} /><details class="mobile-voice"><summary>Voice channel</summary><div class="voice"><label><span class="sr-only">Voice channel</span><select bind:value={selectedChannel} disabled={snapshot.voice.connected}>{#if channels.length===0}<option value="">No channels available</option>{:else}<option value="">Choose a channel</option>{#each channels as channel}<option value={channel.id}>{channel.name} · {channel.memberCount}</option>{/each}{/if}</select></label><Button label={snapshot.voice.connected ? "Leave voice" : "Join voice"} disabled={!snapshot.voice.connected && selectedChannel.length===0} loading={busy} onclick={() => void voiceAction()} /></div></details>{/if}
+    {#if view === "history"}<HistoryPanel items={history} loading={historyLoading} action={(item,play) => void historyAction(item,play)} />{:else if view === "settings"}<ProviderSettings settings={snapshot.providers} {busy} error={providerError} onpreference={(preference) => void setSourcePreference(preference)} onconnection={(connect) => void setMockTidalConnection(connect)} />{:else}<NowPlaying player={snapshot.player} position={displayPosition} {busy} command={(name) => void command(name)} seek={(value) => void api.seek(value).then(applyState).catch((caught) => error=explain(caught))} volume={(value) => void api.volume(value).then(applyState).catch((caught) => error=explain(caught))} /><section class="mobile-queue-preview" aria-labelledby="mobile-queue-title"><header><h2 id="mobile-queue-title">Queue <span>{snapshot.player.queue.length}</span></h2><button onclick={() => queueOpen=true}>Review queue</button></header>{#if snapshot.player.queue.length === 0}<p>Queue is empty.</p>{:else}<ol>{#each snapshot.player.queue.slice(0,2) as item}<li><span><strong>{item.track.title}</strong><small>{item.track.artist}</small></span><time>{Math.floor(item.track.durationMs/60_000)}:{Math.floor((item.track.durationMs%60_000)/1_000).toString().padStart(2,"0")}</time></li>{/each}</ol>{/if}</section><SearchPanel results={searchResults} {playlist} loading={searchLoading} importing={playlistImporting} {importedCount} error={searchError} onsearch={(query) => void search(query)} onadd={(result,next) => void add(result,next)} onimport={() => void importPlaylist()} /><details class="mobile-voice"><summary>Voice channel</summary><div class="voice"><label><span class="sr-only">Voice channel</span><select bind:value={selectedChannel} disabled={snapshot.voice.connected}>{#if channels.length===0}<option value="">No channels available</option>{:else}<option value="">Choose a channel</option>{#each channels as channel}<option value={channel.id}>{channel.name} · {channel.memberCount}</option>{/each}{/if}</select></label><Button label={snapshot.voice.connected ? "Leave voice" : "Join voice"} disabled={!snapshot.voice.connected && selectedChannel.length===0} loading={busy} onclick={() => void voiceAction()} /></div></details>{/if}
   </main>
   {#if queueOpen}<button class="queue-backdrop" tabindex="-1" aria-label="Dismiss queue backdrop" onclick={() => queueOpen=false}></button>{/if}
   <aside class:open={queueOpen}><button class="close" aria-label="Close queue" onclick={() => queueOpen=false}><X size={22} aria-hidden="true" /></button><QueuePanel queue={snapshot.player.queue} {pendingId} error={queueError} action={(name,item,index) => void queueAction(name,item,index)} reorder={(item,index) => void reorderQueue(item,index)} /></aside>

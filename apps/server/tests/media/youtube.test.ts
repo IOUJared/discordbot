@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest"
 import { createRemoteMediaPolicy } from "../../src/media/media-url-policy.js"
 import type { ProcessExecutor } from "../../src/media/types.js"
 import {
+  parsePlaylistOutput,
   parseResolvedOutput,
   parseSearchOutput,
   YouTubeMusicSource,
+  youtubePlaylistArgs,
   youtubeSearchArgs,
 } from "../../src/media/youtube.js"
 
@@ -23,6 +25,89 @@ const fixture = JSON.stringify({
 })
 
 describe("YouTube yt-dlp boundary", () => {
+  it("Given a YouTube playlist When yt-dlp metadata is parsed Then every video stays in playlist order", () => {
+    // Given
+    const output = JSON.stringify({
+      id: "PL-list",
+      title: "Road trip",
+      uploader: "Jared",
+      thumbnail: null,
+      entries: [
+        { id: "first", title: "First song", uploader: "Artist A", duration: 61, thumbnail: null },
+        { id: "second", title: "Second song", uploader: "Artist B", duration: 122 },
+      ],
+    })
+
+    // When
+    const playlist = parsePlaylistOutput(output)
+
+    // Then
+    expect(playlist).toMatchObject({
+      id: "PL-list",
+      title: "Road trip",
+      author: "Jared",
+      tracks: [
+        { id: "first", title: "First song", durationMs: 61_000 },
+        { id: "second", title: "Second song", durationMs: 122_000 },
+      ],
+    })
+  })
+
+  it("Given a playlist URL When process arguments are built Then only YouTube playlist extraction is enabled", () => {
+    // Given
+    const url = "https://www.youtube.com/playlist?list=PL-list"
+
+    // When
+    const args = youtubePlaylistArgs(url)
+
+    // Then
+    expect(args).toContain("--yes-playlist")
+    expect(args.at(-1)).toBe(url)
+  })
+
+  it("Given a non-YouTube URL When playlist metadata is requested Then it is rejected before process execution", async () => {
+    // Given
+    let executions = 0
+    const source = new YouTubeMusicSource({
+      async run() {
+        executions += 1
+        return { stdout: fixture, stderr: "" }
+      },
+    })
+
+    // When
+    const request = source.playlist("https://example.com/playlist?id=secret")
+
+    // Then
+    await expect(request).rejects.toThrow("YouTube playlist")
+    expect(executions).toBe(0)
+  })
+
+  it("Given a playlist preview When the same playlist is imported Then metadata is reused", async () => {
+    // Given
+    let executions = 0
+    const output = JSON.stringify({
+      id: "PL-list",
+      title: "Road trip",
+      uploader: "Jared",
+      entries: [{ id: "first", title: "First song", uploader: "Artist", duration: 61 }],
+    })
+    const source = new YouTubeMusicSource({
+      async run() {
+        executions += 1
+        return { stdout: output, stderr: "" }
+      },
+    })
+    const url = "https://www.youtube.com/playlist?list=PL-list"
+
+    // When
+    await source.playlist(url)
+    await source.playlist(url)
+
+    // Then
+    expect(executions).toBe(1)
+  })
+
   it("parses a search fixture into shared tracks", () => {
     // Given
     const output = fixture

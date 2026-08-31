@@ -94,6 +94,18 @@ export const SearchResultSchema = z
 
 export type SearchResult = Readonly<z.infer<typeof SearchResultSchema>>
 
+export const YouTubePlaylistSchema = z
+  .object({
+    id: boundedIdentifier,
+    title: z.string().trim().min(1).max(512),
+    author: z.string().trim().min(1).max(512),
+    artworkUrl: z.string().url().optional(),
+    tracks: z.array(TrackSchema).min(1).max(500).readonly(),
+  })
+  .strict()
+
+export type YouTubePlaylist = Readonly<z.infer<typeof YouTubePlaylistSchema>>
+
 export const MediaProviderSettingsSchema = z
   .object({
     preference: MediaSourcePreferenceSchema,
@@ -268,4 +280,11 @@ export const PlayerStateMessageSchema = z
   .strict()
 
 export type PlayerState = Readonly<z.infer<typeof PlayerStateSchema>>
+export const PlaylistImportResultSchema = z
+  .object({
+    state: PlayerStateSchema,
+    importedCount: z.number().int().positive().max(500),
+  })
+  .strict()
+export type PlaylistImportResult = Readonly<z.infer<typeof PlaylistImportResultSchema>>
 export type PlayerStateMessage = Readonly<z.infer<typeof PlayerStateMessageSchema>>

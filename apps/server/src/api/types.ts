@@ -12,6 +12,7 @@ import type {
   UserId,
   VoiceStatus,
   Volume,
+  YouTubePlaylist,
 } from "@discord-music/contracts"
 
 export interface PlayerApi {
@@ -21,6 +22,7 @@ export interface PlayerApi {
   onPlaybackFailure(listener: (notification: PlaybackFailureNotification) => void): () => void
   play(query: string, requestedBy: UserId, channelId: ChannelId): Promise<QueueItem>
   enqueue(track: Track, requestedBy: UserId): Promise<QueueItem>
+  enqueueMany(tracks: readonly Track[], requestedBy: UserId): Promise<readonly QueueItem[]>
   startIfIdle(): Promise<void>
   remove(id: QueueItemId): QueueItem
   clear(): void
@@ -47,6 +49,7 @@ export interface PlayerApi {
 
 export interface SearchApi {
   search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]>
+  playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist>
 }
 
 export type VoiceChannel = {

@@ -16,6 +16,10 @@ class RecordingSource implements MusicSource {
   async resolve(): Promise<PlayableMedia> {
     throw new RangeError("No fallback track")
   }
+
+  async playlist(): Promise<never> {
+    throw new RangeError("No fallback playlist")
+  }
 }
 
 describe("mock TIDAL provider", () => {

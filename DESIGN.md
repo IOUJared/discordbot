@@ -169,6 +169,13 @@ Build a non-product `/design-system` showcase first. At 375px, 768px, and 1280px
 - **Visual language:** results are tonal rows (`--surface-primary`) separated by spacing, not generic bordered cards. Artwork is the only vivid element; source/duration stay muted, and the primary add action uses the functional indigo ramp. Result controls remain legible in the narrow wide-desktop search plane and become two equal-width actions on mobile.
 - **Accessibility:** the result count reports visible and total matches, artwork alt identifies the track, long titles remain available through their native/title label, and each action names both the operation and track. “Search more” is a native button with a 44px target and the expanded list update is announced through the result summary. Loading is announced through the existing button plus a result-list status; no result action is icon-only.
 
+### Playlist preview and import
+
+- **Structure:** a pasted YouTube playlist URL resolves into one tonal playlist summary with cover artwork, title, author, exact video count, a compact ordered preview of the first three videos, and one explicit “Add all to queue” action. The playlist summary replaces individual search results for that request; it never auto-enqueues on search.
+- **States:** resolving uses the existing search skeleton language; ready exposes the ordered preview; importing disables the action and labels progress; success returns to the ready card with a confirmed count; invalid, empty, oversized, or unavailable playlists use the adjacent recoverable search error.
+- **Visual language:** the summary uses `--surface-primary`, `--surface-raised`, `--line-subtle`, existing artwork aliases, and the functional indigo action. Ordered video rows are compact dividers inside the summary rather than nested cards.
+- **Accessibility:** the playlist title labels the summary, the total count is live text, every preview row exposes its order/title/artist, and the import button names the playlist and number of videos. Keyboard and focus behavior match the search-result actions.
+
 ### Queue list and queue sheet/drawer
 
 - **Structure:** `section > heading/actions + ol > draggable-or-button row + empty/error region`.

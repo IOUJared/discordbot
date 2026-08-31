@@ -2,7 +2,7 @@ import type { GuildId, HistoryItem } from "@discord-music/contracts"
 import type { FastifyInstance } from "fastify"
 import { authorize, type SessionStore } from "../auth/session-auth.js"
 import type { SnapshotHub } from "../runtime/snapshot-hub.js"
-import { searchSchema } from "./schemas.js"
+import { playlistPreviewSchema, searchSchema } from "./schemas.js"
 import type { SearchApi, VoiceChannel } from "./types.js"
 
 export type StateRouteDeps = {
@@ -31,5 +31,10 @@ export function registerStateRoutes(app: FastifyInstance, deps: StateRouteDeps):
     authorize(request, deps.sessions)
     const { q } = searchSchema.parse(request.body)
     return { results: await deps.search.search(q) }
+  })
+  app.post("/api/playlists/preview", async (request) => {
+    authorize(request, deps.sessions)
+    const { url } = playlistPreviewSchema.parse(request.body)
+    return deps.search.playlist(url, request.signal)
   })
 }

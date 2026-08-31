@@ -82,6 +82,10 @@ class FakePlayer implements PlayerApi {
     this.calls.push("enqueue")
     return item
   }
+  async enqueueMany() {
+    this.calls.push("enqueue-many")
+    return [item]
+  }
   async startIfIdle() {
     this.calls.push("start")
   }
@@ -201,7 +205,15 @@ async function fixture(): Promise<{ readonly app: FastifyInstance; readonly play
       revoke: () => undefined,
     },
     player,
-    search: { search: async () => [] },
+    search: {
+      search: async () => [],
+      playlist: async () => ({
+        id: "PL-list",
+        title: "Road trip",
+        author: "Jared",
+        tracks: [track],
+      }),
+    },
     guildId,
     history: { list: () => [] },
     voiceChannels: async () => [{ id: channelId, name: "General", memberCount: 3 }],
@@ -215,6 +227,45 @@ async function fixture(): Promise<{ readonly app: FastifyInstance; readonly play
 }
 
 describe("Fastify API", () => {
+  it("Given a playlist URL When it is previewed Then ordered metadata is returned", async () => {
+    // Given
+    const { app } = await fixture()
+
+    // When
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/playlists/preview",
+      headers: { authorization: "Bearer valid" },
+      payload: { url: "https://www.youtube.com/playlist?list=PL-list" },
+    })
+
+    // Then
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ title: "Road trip", tracks: [{ id: "track" }] })
+  })
+
+  it("Given a current queue version When a playlist is imported Then all tracks enqueue before playback starts", async () => {
+    // Given
+    const { app, player } = await fixture()
+
+    // When
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/queue/playlist",
+      headers: { authorization: "Bearer valid" },
+      payload: {
+        url: "https://www.youtube.com/playlist?list=PL-list",
+        channelId,
+        expectedVersion: 0,
+      },
+    })
+
+    // Then
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ importedCount: 1, state: { version: 1 } })
+    expect(player.calls).toEqual(["join", "enqueue-many", "start"])
+  })
+
   it("Given a health request When unauthenticated Then only public readiness fields are returned", async () => {
     const { app } = await fixture()
     const response = await app.inject({ method: "GET", url: "/health" })
