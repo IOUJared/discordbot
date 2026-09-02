@@ -212,16 +212,16 @@
   async function search(query: string): Promise<void> {
     searchLoading = true
     searchError = null
-    searchResults = []
-    playlist = null
     importedCount = null
     try {
       if (/^https:\/\/(?:www\.|m\.)?youtube\.com\/.*[?&]list=[^&]+/iu.test(query.trim())) {
         playlistUrl = query.trim()
         playlist = await api.previewPlaylist(playlistUrl)
+        searchResults = []
       } else {
         playlistUrl = ""
         searchResults = await api.search(query)
+        playlist = null
       }
     } catch (caught) { searchError = explain(caught) } finally { searchLoading = false }
   }

@@ -68,7 +68,7 @@
     <Button label="Search" variant="primary" {loading} />
   </form>
 
-  {#if loading}
+  {#if loading && playlist === null && results.length === 0}
     <div class="loading-results" role="status" aria-label="Searching for tracks">
       {#each [0, 1, 2] as row}
         <div class="result-skeleton" aria-hidden="true" data-row={row}>

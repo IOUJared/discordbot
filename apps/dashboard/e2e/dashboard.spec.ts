@@ -671,6 +671,51 @@ for (const width of [375, 768, 1920]) {
   })
 }
 
+test("Given cached search results When a replacement search is pending Then existing metadata stays visible", async ({
+  page,
+}) => {
+  // Given
+  await mockWire(page)
+  await page.unroute("**/api/search")
+  let requestCount = 0
+  let releaseReplacement: (() => void) | null = null
+  const replacementGate = new Promise<void>((resolve) => {
+    releaseReplacement = resolve
+  })
+  await page.route("**/api/search", async (route) => {
+    requestCount += 1
+    if (requestCount === 2) await replacementGate
+    const result =
+      requestCount === 1
+        ? { track: track("cached", "Northern Lines", "Small Hours"), score: 1, bitrateKbps: 252 }
+        : { track: track("fresh", "Southern Lights", "New Hours"), score: 1, bitrateKbps: 251 }
+    await route.fulfill({ json: { results: [result] } })
+  })
+  await page.goto("/#code=search-cache")
+  const query = page.getByPlaceholder("Song, artist, or YouTube link")
+  await query.fill("Northern Lines")
+  await page.getByRole("button", { name: "Search", exact: true }).click()
+  const cachedResult = page.getByTestId("search-result")
+  await expect(page.getByText("Northern Lines", { exact: true })).toBeVisible()
+  const settledBox = await cachedResult.boundingBox()
+
+  // When
+  await query.fill("Southern Lights")
+  await page.getByRole("button", { name: "Search", exact: true }).click()
+
+  // Then
+  await expect(page.getByText("Northern Lines", { exact: true })).toBeVisible()
+  await expect(page.getByLabel("Searching for tracks")).toHaveCount(0)
+  expect(await cachedResult.boundingBox()).toEqual(settledBox)
+  await page.screenshot({
+    path: "../../.omo/evidence/search-redesign/pending-cache.png",
+    fullPage: true,
+  })
+  releaseReplacement?.()
+  await expect(page.getByText("Southern Lights", { exact: true })).toBeVisible()
+  await expect(page.getByText("Northern Lines", { exact: true })).toHaveCount(0)
+})
+
 for (const width of [375, 768, 1280]) {
   test(`Given resolved source audio at ${width}px When the player renders Then its bitrate quality remains visible`, async ({
     page,
