@@ -25,6 +25,10 @@ export interface PlaylistSource {
   playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist>
 }
 
+export interface RadioSource {
+  radio(genre: string, signal?: AbortSignal): Promise<YouTubePlaylist>
+}
+
 export type ProcessRequest = {
   readonly file: string
   readonly args: readonly string[]

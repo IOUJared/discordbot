@@ -1,4 +1,4 @@
-import type { ChannelId, GuildId, UserId } from "@discord-music/contracts"
+import type { ChannelId, GuildId, Track, UserId } from "@discord-music/contracts"
 import {
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
   SlashCommandBuilder,
@@ -6,6 +6,7 @@ import {
 
 export const COMMAND_NAMES = [
   "play",
+  "radio",
   "pause",
   "resume",
   "skip",
@@ -33,7 +34,7 @@ export type CommandContext = {
 }
 
 export type CommandResult =
-  | { readonly kind: "ok"; readonly message: string }
+  | { readonly kind: "ok"; readonly message: string; readonly track?: Track }
   | { readonly kind: "rejected"; readonly reason: "guild" | "user" }
   | { readonly kind: "invalid"; readonly message: string }
 
@@ -91,6 +92,14 @@ const definitions = [
     .setDMPermission(false)
     .addStringOption((option) =>
       option.setName("query").setDescription("Search text or URL").setRequired(true),
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("radio")
+    .setDescription("Queue 50–100 songs from a YouTube playlist for a genre")
+    .setDMPermission(false)
+    .addStringOption((option) =>
+      option.setName("genre").setDescription("Music genre, such as indie rock").setRequired(true),
     )
     .toJSON(),
   ...simpleDefinitions,

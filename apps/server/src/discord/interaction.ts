@@ -1,11 +1,13 @@
-import { ChannelIdSchema, GuildIdSchema, UserIdSchema } from "@discord-music/contracts"
+import { ChannelIdSchema, GuildIdSchema, type Track, UserIdSchema } from "@discord-music/contracts"
 import {
   type Client,
   EmbedBuilder,
   Events,
   GuildMember,
+  type InteractionDeferReplyOptions,
   type InteractionEditReplyOptions,
   type InteractionReplyOptions,
+  MessageFlags,
 } from "discord.js"
 import { z } from "zod"
 
@@ -18,6 +20,25 @@ import {
 
 const commandNameSchema = z.enum(COMMAND_NAMES)
 
+const commandLabels: Readonly<Record<CommandName, string>> = {
+  play: "Now playing",
+  radio: "Radio queued",
+  pause: "Playback paused",
+  resume: "Playback resumed",
+  skip: "Track skipped",
+  stop: "Playback stopped",
+  queue: "Current queue",
+  nowplaying: "Now playing",
+  remove: "Queue updated",
+  clear: "Queue cleared",
+  shuffle: "Queue shuffled",
+  loop: "Loop mode updated",
+  volume: "Volume updated",
+  seek: "Playback position updated",
+  join: "Voice connected",
+  leave: "Voice disconnected",
+}
+
 export interface InteractionCommandPort {
   readonly commandName: string
   readonly guildId: string | null
@@ -27,6 +48,7 @@ export interface InteractionCommandPort {
   readonly deferred: boolean
   getString(name: string): string | null
   getInteger(name: string): number | null
+  deferReply(payload: InteractionDeferReplyOptions): Promise<unknown>
   reply(payload: InteractionReplyOptions): Promise<unknown>
   followUp(payload: InteractionReplyOptions): Promise<unknown>
   editReply(payload: InteractionEditReplyOptions): Promise<unknown>
@@ -74,6 +96,8 @@ function interactionOptions(name: CommandName, port: InteractionCommandPort) {
   switch (name) {
     case "play":
       return { query: requiredString(port, "query") }
+    case "radio":
+      return { genre: requiredString(port, "genre") }
     case "remove":
       return { id: requiredString(port, "id") }
     case "loop":
@@ -103,6 +127,7 @@ export async function handleInteraction(
   router: CommandRouter,
 ): Promise<void> {
   const name = commandNameSchema.parse(port.commandName)
+  await port.deferReply({ flags: MessageFlags.Ephemeral })
   const context: CommandContext = {
     name,
     guildId: GuildIdSchema.parse(port.guildId),
@@ -112,8 +137,31 @@ export async function handleInteraction(
     options: interactionOptions(name, port),
   }
   const result = await router.handle(context)
-  const description = result.kind === "rejected" ? "Command not authorized" : result.message
-  await port.reply({ embeds: [new EmbedBuilder().setDescription(description)], ephemeral: true })
+  await port.editReply({ embeds: [commandEmbed(name, result)] })
+}
+
+function commandEmbed(name: CommandName, result: Awaited<ReturnType<CommandRouter["handle"]>>) {
+  if (result.kind === "ok" && result.track !== undefined) return nowPlayingEmbed(result.track)
+  const author =
+    result.kind === "rejected"
+      ? "Command not authorized"
+      : result.kind === "invalid"
+        ? "Action needed"
+        : commandLabels[name]
+  const description =
+    result.kind === "rejected" ? "You do not have permission to control this bot." : result.message
+  return new EmbedBuilder().setAuthor({ name: author }).setDescription(description)
+}
+
+function nowPlayingEmbed(track: Track): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setAuthor({ name: "Now playing" })
+    .setTitle(track.title)
+    .setURL(track.url)
+    .setDescription(track.artist)
+    .setFooter({ text: "YouTube · Playing in your voice channel" })
+  if (track.artworkUrl !== undefined) embed.setThumbnail(track.artworkUrl)
+  return embed
 }
 
 const failureMessage = "Something went wrong while processing that command."
@@ -158,11 +206,17 @@ export async function handleInteractionBoundary(
   try {
     await handleInteraction(port, router)
   } catch (error) {
-    reportFailure(reporter, "handling", error)
+    const handlingError =
+      error instanceof Error ? error : new Error("Unknown Discord interaction failure")
+    reportFailure(reporter, "handling", handlingError)
     try {
       await replyToFailure(port)
     } catch (responseError) {
-      reportFailure(reporter, "responding", responseError)
+      const replyError =
+        responseError instanceof Error
+          ? responseError
+          : new Error("Unknown Discord interaction response failure")
+      reportFailure(reporter, "responding", replyError)
     }
   }
 }
@@ -196,10 +250,15 @@ export function registerInteractionHandler(
           guildId: interaction.guildId,
           userId: interaction.user.id,
           voiceChannelId,
-          replied: interaction.replied,
-          deferred: interaction.deferred,
+          get replied() {
+            return interaction.replied
+          },
+          get deferred() {
+            return interaction.deferred
+          },
           getString: (name) => interaction.options.getString(name),
           getInteger: (name) => interaction.options.getInteger(name),
+          deferReply: (payload) => interaction.deferReply(payload),
           reply: (payload) => interaction.reply(payload),
           followUp: (payload) => interaction.followUp(payload),
           editReply: (payload) => interaction.editReply(payload),

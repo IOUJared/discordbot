@@ -12,8 +12,8 @@ import {
   parseSearchOutput,
   YouTubeMusicSource,
   youtubePlaylistArgs,
-  youtubeSearchArgs,
 } from "../../src/media/youtube.js"
+import { parseRadioSearchOutput, youtubeRadioSearchArgs } from "../../src/media/youtube-radio.js"
 
 const fixture = JSON.stringify({
   entries: [
@@ -29,6 +29,100 @@ const fixture = JSON.stringify({
 })
 
 describe("YouTube yt-dlp boundary", () => {
+  it("Given a radio genre When playlist discovery arguments are built Then YouTube playlist results are requested safely", () => {
+    // Given
+    const genre = "indie rock; $(id)"
+
+    // When
+    const args = youtubeRadioSearchArgs(genre)
+
+    // Then
+    expect(args.at(-1)).toContain("search_query=indie+rock%3B+%24%28id%29+music+playlist")
+    expect(args.at(-1)).toContain("sp=EgIQAw%253D%253D")
+    expect(args).toContain("--flat-playlist")
+  })
+
+  it("Given playlist-filtered YouTube results When discovery output is parsed Then only valid playlist URLs remain", () => {
+    // Given
+    const output = JSON.stringify({
+      entries: [
+        {
+          id: "PL-first",
+          title: "Indie essentials",
+          uploader: "Curator",
+          url: "https://www.youtube.com/playlist?list=PL-first",
+        },
+        {
+          id: "video",
+          title: "Not a playlist",
+          uploader: "Channel",
+          url: "https://www.youtube.com/watch?v=video",
+        },
+      ],
+    })
+
+    // When
+    const candidates = parseRadioSearchOutput(output)
+
+    // Then
+    expect(candidates).toEqual([
+      {
+        id: "PL-first",
+        title: "Indie essentials",
+        author: "Curator",
+        url: "https://www.youtube.com/playlist?list=PL-first",
+      },
+    ])
+  })
+
+  it("Given radio playlist candidates When the first is too short Then a 50-100 track candidate is selected", async () => {
+    // Given
+    const discovery = JSON.stringify({
+      entries: [
+        {
+          id: "PL-short",
+          title: "Short mix",
+          uploader: "Curator A",
+          url: "https://www.youtube.com/playlist?list=PL-short",
+        },
+        {
+          id: "PL-radio",
+          title: "Indie radio",
+          uploader: "Curator B",
+          url: "https://www.youtube.com/playlist?list=PL-radio",
+        },
+      ],
+    })
+    const playlist = (id: string, count: number) =>
+      JSON.stringify({
+        id,
+        title: id === "PL-radio" ? "Indie radio" : "Short mix",
+        uploader: "Curator",
+        entries: Array.from({ length: count }, (_, index) => ({
+          id: `${id}-${index}`,
+          title: `Song ${index + 1}`,
+          uploader: `Artist ${index + 1}`,
+          duration: 180,
+        })),
+      })
+    const outputs = [discovery, playlist("PL-short", 40), playlist("PL-radio", 75)]
+    const source = new YouTubeMusicSource({
+      async run() {
+        const stdout = outputs.shift()
+        if (stdout === undefined) throw new RangeError("Unexpected radio process execution")
+        return { stdout, stderr: "" }
+      },
+    })
+
+    // When
+    const selected = await source.radio("indie rock")
+
+    // Then
+    expect(selected).toMatchObject({ id: "PL-radio", title: "Indie radio" })
+    expect(selected.tracks).toHaveLength(75)
+    expect(outputs).toEqual([])
+  })
+
   it("Given a YouTube playlist When yt-dlp metadata is parsed Then every video stays in playlist order", () => {
     // Given
     const output = JSON.stringify({
@@ -158,19 +252,6 @@ describe("YouTube yt-dlp boundary", () => {
     expect(parse).toThrow()
   })
 
-  it("keeps an injection payload as one process argument", () => {
-    // Given
-    const payload = "x; touch /tmp/should-not-exist && $(id)"
-
-    // When
-    const args = youtubeSearchArgs(payload)
-
-    // Then
-    expect(args.at(-1)).toBe(`ytsearch5:${payload}`)
-    expect(args).not.toContain("--flat-playlist")
-    expect(args).toContain("bestaudio")
-  })
-
   it("derives YouTube artwork when flat search omits a thumbnail", () => {
     // Given
     const output = JSON.stringify({
@@ -287,15 +368,16 @@ describe("YouTube yt-dlp boundary", () => {
     // Given
     let now = 1_000
     let executions = 0
-    const executor: ProcessExecutor = {
-      async run() {
+    const searchClient = {
+      async search() {
         executions += 1
-        return { stdout: fixture, stderr: "" }
+        return parseSearchOutput(fixture)
       },
     }
-    const source = new YouTubeMusicSource(executor, undefined, {
+    const source = new YouTubeMusicSource(undefined, undefined, {
       now: () => now,
       searchCacheTtlMs: 30_000,
+      searchClient,
     })
 
     // When
@@ -308,16 +390,47 @@ describe("YouTube yt-dlp boundary", () => {
     expect(executions).toBe(2)
   })
 
+  it("Given a YouTube query When search runs Then metadata comes from the low-latency search client", async () => {
+    // Given
+    let processExecutions = 0
+    const source = new YouTubeMusicSource(
+      {
+        async run() {
+          processExecutions += 1
+          return { stdout: fixture, stderr: "" }
+        },
+      },
+      undefined,
+      {
+        searchClient: {
+          async search() {
+            return parseSearchOutput(fixture)
+          },
+        },
+      },
+    )
+
+    // When
+    const results = await source.search("Daft Punk")
+
+    // Then
+    expect(results.at(0)?.track.id).toBe("video-1")
+    expect(processExecutions).toBe(0)
+  })
+
   it("evicts the oldest search when the cache reaches capacity", async () => {
     // Given
     let executions = 0
-    const executor: ProcessExecutor = {
-      async run() {
+    const searchClient = {
+      async search() {
         executions += 1
-        return { stdout: fixture, stderr: "" }
+        return parseSearchOutput(fixture)
       },
     }
-    const source = new YouTubeMusicSource(executor, undefined, { searchCacheCapacity: 1 })
+    const source = new YouTubeMusicSource(undefined, undefined, {
+      searchCacheCapacity: 1,
+      searchClient,
+    })
 
     // When
     await source.search("first")

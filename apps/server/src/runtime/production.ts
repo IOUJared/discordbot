@@ -127,7 +127,7 @@ export async function runProduction(
     createCommandRouter({
       guildId,
       authorizedUserIds,
-      service: new PlayerCommandService(player),
+      service: new PlayerCommandService(player, source),
     }),
     (failure) => app.log.error(failure, failure.event),
   )

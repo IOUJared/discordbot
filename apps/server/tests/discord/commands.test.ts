@@ -10,6 +10,7 @@ import {
   TrackIdSchema,
   UserIdSchema,
   VolumeSchema,
+  type YouTubePlaylist,
 } from "@discord-music/contracts"
 import { ApplicationCommandOptionType } from "discord.js"
 import { describe, expect, it } from "vitest"
@@ -28,6 +29,7 @@ import {
   type InteractionCommandPort,
   type InteractionFailure,
 } from "../../src/discord/interaction.js"
+import type { RadioSource } from "../../src/media/types.js"
 
 const guildId = GuildIdSchema.parse("guild-1")
 const ownerId = UserIdSchema.parse("owner")
@@ -55,6 +57,13 @@ class FakeControls implements PlayerControls {
   async enqueue(_track: Track) {
     this.calls.push("enqueue")
     return queueItem
+  }
+  async enqueueMany(tracks: readonly Track[]) {
+    this.calls.push(`enqueueMany:${tracks.length}`)
+    return tracks.map(() => queueItem)
+  }
+  async startIfIdle() {
+    this.calls.push("startIfIdle")
   }
   pause() {
     this.calls.push("pause")
@@ -110,6 +119,22 @@ class FakeControls implements PlayerControls {
   }
 }
 
+const radioPlaylist: YouTubePlaylist = {
+  id: "radio-playlist",
+  title: "Indie Rock Essentials",
+  author: "YouTube curator",
+  tracks: Array.from({ length: 75 }, (_, index) => ({
+    ...queueItem.track,
+    id: TrackIdSchema.parse(`radio-track-${index}`),
+    title: `Radio song ${index + 1}`,
+    url: `https://www.youtube.com/watch?v=radio-track-${index}`,
+  })),
+}
+
+const radioSource: RadioSource = {
+  radio: async () => radioPlaylist,
+}
+
 function context(overrides: Partial<CommandContext> = {}): CommandContext {
   return {
     guildId,
@@ -126,6 +151,7 @@ describe("Discord command router", () => {
     // Given
     const required = [
       "play",
+      "radio",
       "pause",
       "resume",
       "skip",
@@ -164,6 +190,7 @@ describe("Discord command router", () => {
 
     // When
     const play = option("play")
+    const radio = option("radio")
     const remove = option("remove")
     const loop = option("loop")
     const volume = option("volume")
@@ -172,6 +199,11 @@ describe("Discord command router", () => {
     // Then
     expect(play).toMatchObject({
       name: "query",
+      type: ApplicationCommandOptionType.String,
+      required: true,
+    })
+    expect(radio).toMatchObject({
+      name: "genre",
       type: ApplicationCommandOptionType.String,
       required: true,
     })
@@ -253,9 +285,10 @@ describe("Discord command router", () => {
   it("maps every registered command to the player control surface", async () => {
     // Given
     const controls = new FakeControls()
-    const service = new PlayerCommandService(controls)
+    const service = new PlayerCommandService(controls, radioSource)
     const options: Readonly<Record<string, Readonly<Record<string, string | number>>>> = {
       play: { query: "song" },
+      radio: { genre: "indie rock" },
       remove: { id: "queue-1" },
       loop: { mode: "track" },
       volume: { volume: 125 },
@@ -270,9 +303,13 @@ describe("Discord command router", () => {
     // Then
     expect(controls.calls).toEqual([
       "play",
+      "join",
+      "enqueueMany:75",
+      "startIfIdle",
       "pause",
       "resume",
       "skip",
+      "snapshot",
       "stop",
       "snapshot",
       "snapshot",
@@ -287,9 +324,36 @@ describe("Discord command router", () => {
     ])
   })
 
-  it("dispatches a chat-input interaction and replies with an embed", async () => {
+  it("queues a 50-100 track YouTube playlist for a radio genre", async () => {
+    // Given
+    const controls = new FakeControls()
+    const genres: string[] = []
+    const service = new PlayerCommandService(controls, {
+      radio: async (genre) => {
+        genres.push(genre)
+        return radioPlaylist
+      },
+    })
+
+    // When
+    const result = await service.execute(
+      context({ name: "radio", options: { genre: "indie rock" } }),
+    )
+
+    // Then
+    expect(genres).toEqual(["indie rock"])
+    expect(controls.calls).toEqual(["join", "enqueueMany:75", "startIfIdle"])
+    expect(result).toEqual({
+      kind: "ok",
+      message: "Queued 75 tracks from Indie Rock Essentials for indie rock radio.",
+    })
+  })
+
+  it("defers play immediately and edits the response after the command finishes", async () => {
     // Given
     const replies: unknown[] = []
+    const deferrals: unknown[] = []
+    const edits: unknown[] = []
     const port: InteractionCommandPort = {
       commandName: "play",
       guildId: "guild-1",
@@ -299,11 +363,16 @@ describe("Discord command router", () => {
       deferred: false,
       getString: (name) => (name === "query" ? "injection; $(id)" : null),
       getInteger: () => null,
+      deferReply: async (payload) => {
+        deferrals.push(payload)
+      },
       reply: async (payload) => {
         replies.push(payload)
       },
       followUp: async () => {},
-      editReply: async () => {},
+      editReply: async (payload) => {
+        edits.push(payload)
+      },
     }
     const calls: CommandContext[] = []
     const router = createCommandRouter({
@@ -312,7 +381,7 @@ describe("Discord command router", () => {
       service: {
         execute: async (received) => {
           calls.push(received)
-          return { kind: "ok", message: "Queued" }
+          return { kind: "ok", message: "Now playing", track: queueItem.track }
         },
       },
     })
@@ -322,16 +391,59 @@ describe("Discord command router", () => {
 
     // Then
     expect(calls.at(0)?.options).toEqual({ query: "injection; $(id)" })
-    expect(replies.at(0)).toMatchObject({ embeds: [{ data: { description: "Queued" } }] })
+    expect(deferrals).toHaveLength(1)
+    expect(replies).toEqual([])
+    expect(edits.at(0)).toMatchObject({
+      embeds: [
+        {
+          data: {
+            author: { name: "Now playing" },
+            title: "Song",
+            url: "https://youtube.example/watch?v=1",
+            description: "Artist",
+            footer: { text: "YouTube · Playing in your voice channel" },
+          },
+        },
+      ],
+    })
+  })
+
+  it("defers a control command before executing it and edits the acknowledgement", async () => {
+    // Given
+    const events: string[] = []
+    const port = interactionPort({
+      commandName: "pause",
+      deferReply: async () => {
+        events.push("deferred")
+      },
+      reply: async () => {
+        events.push("replied")
+      },
+      editReply: async () => {
+        events.push("edited")
+      },
+    })
+    const router: CommandRouter = {
+      handle: async () => {
+        events.push("executed")
+        return { kind: "ok", message: "Playback paused" }
+      },
+    }
+
+    // When
+    await handleInteraction(port, router)
+
+    // Then
+    expect(events).toEqual(["deferred", "executed", "edited"])
   })
 
   it("contains a routed command rejection, reports a redacted failure, and acknowledges once", async () => {
     // Given
-    const replies: unknown[] = []
+    const edits: unknown[] = []
     const failures: InteractionFailure[] = []
     const port = interactionPort({
-      reply: async (payload) => {
-        replies.push(payload)
+      editReply: async (payload) => {
+        edits.push(payload)
       },
     })
     const router: CommandRouter = {
@@ -351,20 +463,18 @@ describe("Discord command router", () => {
         error: { type: "error", message: "[Redacted]" },
       },
     ])
-    expect(replies).toEqual([
-      { content: "Something went wrong while processing that command.", ephemeral: true },
-    ])
+    expect(edits).toEqual([{ content: "Something went wrong while processing that command." }])
   })
 
-  it("contains a failure while sending the initial reply", async () => {
+  it("contains a failure while editing the deferred error response", async () => {
     // Given
     const failures: InteractionFailure[] = []
     const port = interactionPort({
-      reply: async () => {
-        throw new Error("reply transport failed")
+      editReply: async () => {
+        throw new Error("edit transport failed")
       },
     })
-    const router: CommandRouter = { handle: async () => ({ kind: "ok", message: "Queued" }) }
+    const router: CommandRouter = { handle: async () => Promise.reject(new Error("failed")) }
 
     // When
     await handleInteractionBoundary(port, router, (failure) => failures.push(failure))
@@ -388,15 +498,26 @@ describe("Discord command router", () => {
     // Given
     const replies: unknown[] = []
     const followUps: unknown[] = []
-    const port = interactionPort({
+    const port: InteractionCommandPort = {
+      commandName: "pause",
+      guildId: "guild-1",
+      userId: "owner",
+      voiceChannelId: "voice-1",
       replied: true,
+      deferred: false,
+      getString: () => null,
+      getInteger: () => null,
+      deferReply: async () => {
+        throw new Error("already acknowledged")
+      },
       reply: async (payload) => {
         replies.push(payload)
       },
       followUp: async (payload) => {
         followUps.push(payload)
       },
-    })
+      editReply: async () => {},
+    }
     const router: CommandRouter = { handle: async () => Promise.reject(new Error("failed")) }
 
     // When
@@ -432,6 +553,45 @@ describe("Discord command router", () => {
     expect(edits).toEqual([{ content: "Something went wrong while processing that command." }])
   })
 
+  it("edits a play deferral when playback fails after acknowledgement", async () => {
+    // Given
+    let deferred = false
+    const replies: unknown[] = []
+    const edits: unknown[] = []
+    const port: InteractionCommandPort = {
+      commandName: "play",
+      guildId: "guild-1",
+      userId: "owner",
+      voiceChannelId: "voice-1",
+      replied: false,
+      get deferred() {
+        return deferred
+      },
+      getString: () => "song",
+      getInteger: () => null,
+      deferReply: async () => {
+        deferred = true
+      },
+      reply: async (payload) => {
+        replies.push(payload)
+      },
+      followUp: async () => {},
+      editReply: async (payload) => {
+        edits.push(payload)
+      },
+    }
+    const router: CommandRouter = {
+      handle: async () => Promise.reject(new Error("playback failed")),
+    }
+
+    // When
+    await handleInteractionBoundary(port, router, () => {})
+
+    // Then
+    expect(replies).toEqual([])
+    expect(edits).toEqual([{ content: "Something went wrong while processing that command." }])
+  })
+
   it("does not route non-chat interactions", async () => {
     // Given
     let calls = 0
@@ -451,10 +611,10 @@ describe("Discord command router", () => {
 
   it("contains reporter failures while still acknowledging the command failure", async () => {
     // Given
-    const replies: unknown[] = []
+    const edits: unknown[] = []
     const port = interactionPort({
-      reply: async (payload) => {
-        replies.push(payload)
+      editReply: async (payload) => {
+        edits.push(payload)
       },
     })
     const router: CommandRouter = { handle: async () => Promise.reject(new Error("failed")) }
@@ -465,25 +625,29 @@ describe("Discord command router", () => {
     })
 
     // Then
-    expect(replies).toEqual([
-      { content: "Something went wrong while processing that command.", ephemeral: true },
-    ])
+    expect(edits).toEqual([{ content: "Something went wrong while processing that command." }])
   })
 })
 
 function interactionPort(overrides: Partial<InteractionCommandPort> = {}): InteractionCommandPort {
+  let deferred = overrides.deferred ?? false
   return {
-    commandName: "pause",
-    guildId: "guild-1",
-    userId: "owner",
-    voiceChannelId: "voice-1",
-    replied: false,
-    deferred: false,
-    getString: () => null,
-    getInteger: () => null,
-    reply: async () => {},
-    followUp: async () => {},
-    editReply: async () => {},
-    ...overrides,
+    commandName: overrides.commandName ?? "pause",
+    guildId: overrides.guildId ?? "guild-1",
+    userId: overrides.userId ?? "owner",
+    voiceChannelId: overrides.voiceChannelId ?? "voice-1",
+    replied: overrides.replied ?? false,
+    get deferred() {
+      return deferred
+    },
+    getString: overrides.getString ?? (() => null),
+    getInteger: overrides.getInteger ?? (() => null),
+    deferReply: async (payload) => {
+      deferred = true
+      await overrides.deferReply?.(payload)
+    },
+    reply: overrides.reply ?? (async () => {}),
+    followUp: overrides.followUp ?? (async () => {}),
+    editReply: overrides.editReply ?? (async () => {}),
   }
 }

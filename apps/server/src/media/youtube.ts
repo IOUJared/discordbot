@@ -19,6 +19,7 @@ import type {
   PlayableMedia,
   PlaylistSource,
   ProcessExecutor,
+  RadioSource,
   RemotePlayableMedia,
 } from "./types.js"
 import {
@@ -26,6 +27,15 @@ import {
   parseYouTubePlaylistUrl,
   youtubePlaylistArgs,
 } from "./youtube-playlist.js"
+import {
+  maximumRadioTracks,
+  minimumRadioTracks,
+  parseRadioSearchOutput,
+  RadioPlaylistNotFoundError,
+  youtubeRadioPlaylistArgs,
+  youtubeRadioSearchArgs,
+} from "./youtube-radio.js"
+import { type YouTubeSearchClient, youtubeSearchClient } from "./youtube-search.js"
 
 export { parsePlaylistOutput, youtubePlaylistArgs } from "./youtube-playlist.js"
 
@@ -76,6 +86,7 @@ type YouTubeMusicSourceOptions = {
   readonly searchCacheTtlMs?: number
   readonly searchCacheCapacity?: number
   readonly youtubeCookiesPath?: string
+  readonly searchClient?: YouTubeSearchClient
 }
 
 type SearchCacheEntry = {
@@ -86,17 +97,6 @@ type SearchCacheEntry = {
 type PlaylistCacheEntry = {
   readonly expiresAt: number
   readonly playlist: YouTubePlaylist
-}
-
-export function youtubeSearchArgs(query: string): readonly string[] {
-  return [
-    "--dump-single-json",
-    "--no-playlist",
-    "--no-warnings",
-    "-f",
-    "bestaudio",
-    `ytsearch5:${query}`,
-  ]
 }
 
 export function parseSearchOutput(output: string): readonly SearchResult[] {
@@ -172,11 +172,12 @@ export function parseResolvedOutput(output: string): RemotePlayableMedia {
   }
 }
 
-export class YouTubeMusicSource implements MusicSource, PlaylistSource {
+export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSource {
   private readonly now: () => number
   private readonly searchCacheTtlMs: number
   private readonly searchCacheCapacity: number
   private readonly youtubeCookiesPath: string | undefined
+  private readonly searchClient: YouTubeSearchClient
   private readonly searchCache = new Map<string, SearchCacheEntry>()
   private readonly playlistCache = new Map<string, PlaylistCacheEntry>()
 
@@ -189,6 +190,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
     this.searchCacheTtlMs = options.searchCacheTtlMs ?? defaultSearchCacheTtlMs
     this.searchCacheCapacity = options.searchCacheCapacity ?? defaultSearchCacheCapacity
     this.youtubeCookiesPath = options.youtubeCookiesPath
+    this.searchClient = options.searchClient ?? youtubeSearchClient
   }
 
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
@@ -199,17 +201,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
     }
     this.searchCache.delete(cacheKey)
 
-    const request = {
-      file: "yt-dlp",
-      args: [
-        ...(this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]),
-        ...youtubeSearchArgs(query),
-      ],
-      timeoutMs: processTimeoutMs,
-      ...(signal === undefined ? {} : { signal }),
-    }
-    const result = await this.executor.run(request)
-    const results = parseSearchOutput(result.stdout)
+    const results = await this.searchClient.search(query, signal)
     if (this.searchCache.size >= this.searchCacheCapacity) {
       const oldest = this.searchCache.keys().next()
       if (!oldest.done) {
@@ -245,6 +237,35 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource {
       playlist,
     })
     return playlist
+  }
+
+  async radio(genre: string, signal?: AbortSignal): Promise<YouTubePlaylist> {
+    const cookieArgs =
+      this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]
+    const discovery = await this.executor.run({
+      file: "yt-dlp",
+      args: [...cookieArgs, ...youtubeRadioSearchArgs(genre)],
+      timeoutMs: processTimeoutMs,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const candidates = parseRadioSearchOutput(discovery.stdout)
+    for (const candidate of candidates) {
+      const result = await this.executor.run({
+        file: "yt-dlp",
+        args: [...cookieArgs, ...youtubeRadioPlaylistArgs(candidate.url)],
+        timeoutMs: processTimeoutMs,
+        ...(signal === undefined ? {} : { signal }),
+      })
+      const playlist = parsePlaylistOutput(result.stdout)
+      const tracks = playlist.tracks
+        .filter(
+          (track, index, allTracks) =>
+            allTracks.findIndex((candidateTrack) => candidateTrack.id === track.id) === index,
+        )
+        .slice(0, maximumRadioTracks)
+      if (tracks.length >= minimumRadioTracks) return { ...playlist, tracks }
+    }
+    throw new RadioPlaylistNotFoundError(genre)
   }
 
   async resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
