@@ -30,6 +30,7 @@ const youtubeSearchFieldMask = ["videoId", "title", "ownerText", "lengthText", "
   .map((field) => `${videoRendererField}.${field}`)
   .join(",")
 const maximumSearchResults = 5
+const youtubeSearchTimeoutMs = 2_500
 
 export interface YouTubeSearchClient {
   search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]>
@@ -83,7 +84,7 @@ export const youtubeSearchClient: YouTubeSearchClient = {
   async search(query, signal) {
     const response = await ky
       .post(youtubeSearchEndpoint, {
-        timeout: 900,
+        timeout: youtubeSearchTimeoutMs,
         retry: 0,
         ...(signal === undefined ? {} : { signal }),
         headers: {

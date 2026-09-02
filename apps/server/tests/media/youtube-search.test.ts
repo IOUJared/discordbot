@@ -48,4 +48,18 @@ describe("YouTube low-latency search boundary", () => {
       }),
     )
   })
+
+  it("does not return an internal error when YouTube search takes longer than 900 ms", async () => {
+    // Given
+    const query = "slow upstream response"
+
+    // When
+    await youtubeSearchClient.search(query)
+
+    // Then
+    expect(post).toHaveBeenCalledWith(
+      "https://www.youtube.com/youtubei/v1/search",
+      expect.objectContaining({ timeout: 2_500 }),
+    )
+  })
 })
