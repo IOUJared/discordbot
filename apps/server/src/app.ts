@@ -2,7 +2,7 @@ import type { GuildId, HistoryItem } from "@discord-music/contracts"
 import cors from "@fastify/cors"
 import rateLimit from "@fastify/rate-limit"
 import websocket from "@fastify/websocket"
-import Fastify, { type FastifyInstance } from "fastify"
+import Fastify, { type FastifyInstance, LogController } from "fastify"
 import { z } from "zod"
 
 import { ApiError, errorBody, StaleVersionError, staleVersionBody } from "./api/errors.js"
@@ -41,7 +41,10 @@ export type AppDeps = {
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: loggerOptions(deps.config.logLevel), disableRequestLogging: true })
+  const app = Fastify({
+    logger: loggerOptions(deps.config.logLevel),
+    logController: new LogController({ disableRequestLogging: true }),
+  })
   const snapshots = new SnapshotHub(deps.player)
   app.addHook("onClose", async () => snapshots.close())
   await app.register(cors, {
