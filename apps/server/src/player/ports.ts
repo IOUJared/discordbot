@@ -11,6 +11,7 @@ export interface AudioResourceFactory {
 }
 
 export type PlaybackCallbacks = {
+  readonly started: () => Promise<void>
   readonly finished: () => Promise<void>
   readonly failed: (error: Error) => Promise<void>
 }

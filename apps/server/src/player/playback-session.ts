@@ -11,6 +11,14 @@ type PlaybackStart = {
   readonly signal: AbortSignal
 }
 
+type PreloadedMedia = {
+  readonly trackId: QueueItem["track"]["id"]
+  readonly abort: AbortController
+  readonly result: Promise<
+    { readonly kind: "ready"; readonly media: PlayableMedia } | { readonly kind: "failed" }
+  >
+}
+
 export class PlaybackSession {
   private item: QueueItem | null = null
   private resource: AudioResource | null = null
@@ -23,6 +31,7 @@ export class PlaybackSession {
   private media: PlayableMedia | null = null
   private generation = 0
   private startedAt = ""
+  private preloaded: PreloadedMedia | null = null
 
   constructor(
     private readonly source: MusicSource,
@@ -58,7 +67,7 @@ export class PlaybackSession {
     this.generation += 1
     this.item = item
     this.basePositionMs = offsetMs
-    this.startedAtMs = this.clock.now().getTime()
+    this.startedAtMs = 0
     this.startedAt = this.clock.now().toISOString()
     this.paused = false
     this.resource?.dispose()
@@ -72,7 +81,14 @@ export class PlaybackSession {
   }
 
   async prepare(start: PlaybackStart): Promise<AudioResource | null> {
-    const media = this.media ?? (await this.source.resolve(start.item.track, start.signal))
+    const preload = this.preloaded?.trackId === start.item.track.id ? this.preloaded : null
+    if (preload !== null) this.preloaded = null
+    const preloaded = preload === null ? null : await preload.result
+    const media =
+      this.media ??
+      (preloaded?.kind === "ready"
+        ? preloaded.media
+        : await this.source.resolve(start.item.track, start.signal))
     if (start.offsetMs > 0 && !media.seekable) {
       throw new RangeError("Media does not support seeking")
     }
@@ -92,6 +108,30 @@ export class PlaybackSession {
     return generation === this.generation && this.item !== null
   }
 
+  markStarted(generation: number): void {
+    if (!this.isActive(generation) || this.paused || this.startedAtMs !== 0) return
+    this.startedAtMs = this.clock.now().getTime()
+  }
+
+  preload(track: QueueItem["track"]): void {
+    if (this.preloaded?.trackId === track.id) return
+    this.preloaded?.abort.abort()
+    const abort = new AbortController()
+    this.preloaded = {
+      trackId: track.id,
+      abort,
+      result: this.source.resolve(track, abort.signal).then(
+        (media) => ({ kind: "ready", media }),
+        () => ({ kind: "failed" }),
+      ),
+    }
+  }
+
+  cancelPreload(): void {
+    this.preloaded?.abort.abort()
+    this.preloaded = null
+  }
+
   pause(): void {
     this.basePositionMs = this.position()
     this.paused = true
@@ -104,7 +144,8 @@ export class PlaybackSession {
 
   position(): number {
     if (this.item === null) return 0
-    const elapsed = this.paused ? 0 : this.clock.now().getTime() - this.startedAtMs
+    const elapsed =
+      this.paused || this.startedAtMs === 0 ? 0 : this.clock.now().getTime() - this.startedAtMs
     return Math.min(this.item.track.durationMs, this.basePositionMs + elapsed)
   }
 

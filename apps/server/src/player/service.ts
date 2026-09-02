@@ -97,6 +97,7 @@ export class PlayerService extends QueueControls {
     const next = this.queue.shift()
     if (next === undefined) {
       this.idle.schedule()
+      this.emitState()
       return
     }
     await this.startPlayback(next, 0)
@@ -133,12 +134,14 @@ export class PlayerService extends QueueControls {
 
   stop(): void {
     this.queue.clear()
+    this.playback.cancelPreload()
     if (this.playback.current !== null) {
       this.history.append(this.playback.current, this.playback.playedAt, "stopped")
     }
     this.playback.invalidate()
     this.options.voice.stop()
     this.resetCurrent()
+    this.emitState()
     this.idle.schedule()
   }
 
@@ -211,9 +214,15 @@ export class PlayerService extends QueueControls {
       if (resource === null) return
       this.options.voice.setVolume(this.volume)
       this.options.voice.play(resource, {
+        started: async () => {
+          this.playback.markStarted(start.generation)
+          this.emitState()
+        },
         finished: async () => this.handleFinished(start.generation),
         failed: async (error) => this.handleFailed(start.generation, error),
       })
+      const next = this.queue.list().at(0)
+      if (next !== undefined) this.playback.preload(next.track)
       this.emitState()
     } catch (error) {
       if (error instanceof Error) await this.handleFailed(start.generation, error)
@@ -245,7 +254,6 @@ export class PlayerService extends QueueControls {
 
   private resetCurrent(): void {
     this.playback.reset()
-    this.emitState()
   }
 
   private persistSettings(): void {

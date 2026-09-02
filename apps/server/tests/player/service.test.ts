@@ -50,6 +50,7 @@ const trackOne = track(1)
 
 class FakeSource implements MusicSource {
   resolveCount = 0
+  readonly resolvedTrackIds: string[] = []
   failTrackId: string | null = null
   seekable = true
 
@@ -59,6 +60,7 @@ class FakeSource implements MusicSource {
 
   async resolve(track: Track) {
     this.resolveCount += 1
+    this.resolvedTrackIds.push(track.id)
     if (track.id === this.failTrackId) throw new RangeError("unplayable fixture")
     return { ...playable, seekable: this.seekable }
   }
@@ -157,6 +159,42 @@ function harness(
 }
 
 describe("PlayerService", () => {
+  it("keeps the published position at zero until Discord starts audible playback", async () => {
+    // Given
+    const { clock, service, voice } = harness()
+    await service.enqueue(trackOne, userId)
+    await service.startIfIdle()
+
+    // When
+    clock.advance(4_000)
+    const whileBuffering = service.snapshot().positionMs
+    await voice.callbacks?.started()
+    clock.advance(1_000)
+
+    // Then
+    expect({ whileBuffering, playing: service.snapshot().positionMs }).toEqual({
+      whileBuffering: 0,
+      playing: 1_000,
+    })
+  })
+
+  it("pre-resolves the next queued track and reuses it when playback advances", async () => {
+    // Given
+    const { service, source, voice } = harness()
+    await service.enqueueMany([trackOne, track(2)], userId)
+
+    // When
+    await service.startIfIdle()
+    await Promise.resolve()
+    const resolvedBeforeAdvance = [...source.resolvedTrackIds]
+    await voice.callbacks?.finished()
+
+    // Then
+    expect(resolvedBeforeAdvance).toEqual(["track-1", "track-2"])
+    expect(source.resolvedTrackIds).toEqual(["track-1", "track-2"])
+    expect(service.snapshot().currentItem?.track.id).toBe("track-2")
+  })
+
   it("Given an ordered playlist When it is enqueued Then one state change contains every track in order", async () => {
     // Given
     const { service } = harness()
@@ -207,6 +245,32 @@ describe("PlayerService", () => {
       queue: [],
     })
     expect(voice.stops).toBe(1)
+  })
+
+  it("Given a queued next track When playback skips Then observers never receive empty metadata", async () => {
+    // Given
+    const { service } = harness()
+    await service.enqueueMany([trackOne, track(2)], userId)
+    await service.startIfIdle()
+    const observedStates: Array<{
+      readonly trackId: string | null
+      readonly bitrateKbps: number | null | undefined
+      readonly seekable: boolean
+    }> = []
+    service.onStateChange(() => {
+      const snapshot = service.snapshot()
+      observedStates.push({
+        trackId: snapshot.currentItem?.track.id ?? null,
+        bitrateKbps: snapshot.bitrateKbps,
+        seekable: snapshot.seekable,
+      })
+    })
+
+    // When
+    await service.skip()
+
+    // Then
+    expect(observedStates).toEqual([{ trackId: "track-2", bitrateKbps: 252, seekable: true }])
   })
 
   it("tracks position and reuses resolved media when rebuilding on seek/restart", async () => {

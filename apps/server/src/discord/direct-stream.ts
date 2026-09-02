@@ -7,7 +7,7 @@ import { type RemoteMediaPolicy, remoteMediaPolicy } from "../media/media-url-po
 import type { RemotePlayableMedia } from "../media/types.js"
 
 const directTimeoutMs = 20_000
-const playbackBufferBytes = 128 * 1024
+export const playbackBufferBytes = 32 * 1024
 const playbackHighWaterMarkBytes = 512 * 1024
 
 export class DirectMediaError extends Error {

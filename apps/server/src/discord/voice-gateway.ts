@@ -101,6 +101,9 @@ export class DiscordVoiceGateway implements VoiceGateway {
     this.player.on(AudioPlayerStatus.Idle, () => {
       void this.callbacks?.finished()
     })
+    this.player.on(AudioPlayerStatus.Playing, () => {
+      void this.callbacks?.started()
+    })
     this.player.on("error", (event) => {
       void this.callbacks?.failed(event)
     })

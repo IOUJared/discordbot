@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream"
 
 import { ChannelIdSchema, GuildIdSchema, VolumeSchema } from "@discord-music/contracts"
 import { createAudioResource, StreamType, VoiceConnectionStatus } from "@discordjs/voice"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { DiscordVoiceResource } from "../../src/discord/resource-factory.js"
 import {
@@ -44,6 +44,34 @@ class ReadyGate {
 const adapterForGuild = () => () => ({ sendPayload: () => true, destroy: () => undefined })
 
 describe("DiscordVoiceGateway lifecycle", () => {
+  it("notifies playback only after the Discord audio player enters Playing", async () => {
+    // Given
+    const gateway = new DiscordVoiceGateway({ adapterForGuild })
+    const input = new PassThrough()
+    const resource = new DiscordVoiceResource(
+      createAudioResource(input, { inputType: StreamType.Raw, inlineVolume: true }),
+      () => input.destroy(),
+    )
+    let starts = 0
+
+    // When
+    gateway.play(resource, {
+      started: async () => {
+        starts += 1
+      },
+      finished: async () => undefined,
+      failed: async () => undefined,
+    })
+    const beforeAudio = starts
+    input.write(Buffer.alloc(3_840))
+    await vi.waitFor(() => expect(starts).toBe(1))
+
+    // Then
+    expect({ beforeAudio, afterAudio: starts }).toEqual({ beforeAudio: 0, afterAudio: 1 })
+    gateway.stop()
+    resource.dispose()
+  })
+
   it("Given a selected volume When a new resource starts Then it begins at that volume", () => {
     // Given
     const gateway = new DiscordVoiceGateway({ adapterForGuild })
@@ -56,7 +84,11 @@ describe("DiscordVoiceGateway lifecycle", () => {
     gateway.setVolume(VolumeSchema.parse(31))
 
     // When
-    gateway.play(resource, { finished: async () => undefined, failed: async () => undefined })
+    gateway.play(resource, {
+      started: async () => undefined,
+      finished: async () => undefined,
+      failed: async () => undefined,
+    })
 
     // Then
     expect(audioResource.volume?.volume).toBeCloseTo(0.31)

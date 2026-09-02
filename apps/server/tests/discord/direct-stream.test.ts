@@ -8,6 +8,7 @@ import {
   DirectMediaError,
   openDirectStream,
   openSeekableMediaProxy,
+  playbackBufferBytes,
 } from "../../src/discord/direct-stream.js"
 import { type RemoteMediaPolicy, RemoteMediaUrlSchema } from "../../src/media/media-url-policy.js"
 import type { RemotePlayableMedia } from "../../src/media/types.js"
@@ -29,6 +30,17 @@ afterEach(async () => {
 })
 
 describe("direct media HTTP boundary", () => {
+  it("uses a 32 KiB default startup reserve", () => {
+    // Given
+    const expectedBytes = 32 * 1024
+
+    // When
+    const configuredBytes = playbackBufferBytes
+
+    // Then
+    expect(configuredBytes).toBe(expectedBytes)
+  })
+
   it("forwards byte-range requests through the authorized seek bridge", async () => {
     // Given
     let receivedRange: string | undefined
