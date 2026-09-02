@@ -114,6 +114,33 @@ describe("dashboard API wire contract", () => {
     })
   })
 
+  it("Given a cancellable search When requested Then its abort signal reaches fetch", async () => {
+    let requestSignal: AbortSignal | undefined
+    let observedRequest: (() => void) | undefined
+    const requestObserved = new Promise<void>((resolve) => {
+      observedRequest = resolve
+    })
+    const fetcher: typeof globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      requestSignal = request.signal
+      observedRequest?.()
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), {
+          once: true,
+        })
+      })
+    }
+    const api = createApi("https://music.example", () => "session", fetcher)
+    const controller = new AbortController()
+
+    const pending = api.search("old query", controller.signal)
+    void pending.catch(() => undefined)
+    await requestObserved
+    controller.abort()
+
+    expect(requestSignal?.aborted).toBe(true)
+  })
+
   it("Given a queue item When reordering Then PATCH sends its unique ID and expected version", async () => {
     const recorder = createRecorder()
     await recorder.api.reorder(QueueItemIdSchema.parse("queue-1"), 2, 7)

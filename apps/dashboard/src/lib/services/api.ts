@@ -76,15 +76,20 @@ export function createApi(
       json(client.get("api/voice-channels"), ChannelsSchema).then((value) => value.channels),
     history: (): Promise<readonly HistoryItem[]> =>
       json(client.get("api/history"), HistorySchema).then((value) => value.items),
-    search: (query: string): Promise<readonly SearchResult[]> =>
-      json(client.post("api/search", { json: { q: query } }), ResultsSchema).then(
-        (value) => value.results,
-      ),
-    previewPlaylist: (url: string) =>
+    search: (query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> =>
+      json(
+        client.post("api/search", {
+          json: { q: query },
+          ...(signal === undefined ? {} : { signal }),
+        }),
+        ResultsSchema,
+      ).then((value) => value.results),
+    previewPlaylist: (url: string, signal?: AbortSignal) =>
       json(
         client.post("api/playlists/preview", {
           json: { url },
           timeout: playlistRequestTimeoutMs,
+          ...(signal === undefined ? {} : { signal }),
         }),
         YouTubePlaylistSchema,
       ),

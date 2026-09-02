@@ -30,9 +30,9 @@ afterEach(async () => {
 })
 
 describe("direct media HTTP boundary", () => {
-  it("uses a 32 KiB default startup reserve", () => {
+  it("uses a 16 KiB default startup reserve", () => {
     // Given
-    const expectedBytes = 32 * 1024
+    const expectedBytes = 16 * 1024
 
     // When
     const configuredBytes = playbackBufferBytes
@@ -176,6 +176,59 @@ describe("direct media HTTP boundary", () => {
     const timeout = stream.socket.timeout
     stream.destroy()
     expect(timeout).toBe(0)
+  })
+
+  it("follows an authorized Google media redirect", async () => {
+    // Given
+    let requests = 0
+    const server = createServer((request, response) => {
+      requests += 1
+      if (request.url === "/start") {
+        response.writeHead(302, { location: "http://rr2.googlevideo.com/audio" })
+        response.end()
+        return
+      }
+      response.end("audio")
+    })
+    servers.push(server)
+    server.listen(0, "127.0.0.1")
+    await once(server, "listening")
+    const address = server.address()
+    if (address === null || typeof address === "string") {
+      throw new RangeError("Expected an IP test server address")
+    }
+    const policy: RemoteMediaPolicy = {
+      async authorize(url) {
+        return {
+          url,
+          hostname: new URL(url).hostname,
+          address: "127.0.0.1",
+          family: 4,
+          port: address.port,
+        }
+      },
+    }
+    const media: RemotePlayableMedia = {
+      kind: "remote",
+      url: RemoteMediaUrlSchema.parse("http://rr1.googlevideo.com/start"),
+      headers: {},
+      container: "webm",
+      codec: "opus",
+      bitrateKbps: null,
+      seekable: true,
+    }
+
+    // When
+    const stream = await openDirectStream(media, { policy })
+    let body = ""
+    stream.setEncoding("utf8")
+    stream.on("data", (chunk: string) => {
+      body += chunk
+    })
+    await once(stream, "end")
+
+    // Then
+    expect({ requests, body }).toEqual({ requests: 2, body: "audio" })
   })
 
   it("does not follow a redirect to a private destination", async () => {

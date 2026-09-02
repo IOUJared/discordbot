@@ -390,6 +390,82 @@ describe("YouTube yt-dlp boundary", () => {
     expect(executions).toBe(2)
   })
 
+  it("coalesces concurrent normalized searches into one upstream request", async () => {
+    // Given
+    let executions = 0
+    const source = new YouTubeMusicSource(undefined, undefined, {
+      searchClient: {
+        async search() {
+          executions += 1
+          await new Promise((resolve) => setImmediate(resolve))
+          return parseSearchOutput(fixture)
+        },
+      },
+    })
+
+    // When
+    const [first, second] = await Promise.all([
+      source.search(" Daft Punk "),
+      source.search("daft punk"),
+    ])
+
+    // Then
+    expect(executions).toBe(1)
+    expect(second).toBe(first)
+  })
+
+  it("pre-resolves the first result so selecting it reuses the in-flight media lookup", async () => {
+    // Given
+    let executions = 0
+    const executor: ProcessExecutor = {
+      async run() {
+        executions += 1
+        return {
+          stdout: JSON.stringify({
+            url: "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+            http_headers: {},
+            ext: "webm",
+            acodec: "opus",
+            protocol: "https",
+          }),
+          stderr: "",
+        }
+      },
+    }
+    const deliveryUrl = RemoteMediaUrlSchema.parse(
+      "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
+    )
+    const policy: RemoteMediaPolicy = {
+      async authorize() {
+        return {
+          url: deliveryUrl,
+          hostname: "rr1---sn-a5mekn7z.googlevideo.com",
+          address: "142.250.190.110",
+          family: 4,
+          port: 443,
+        }
+      },
+    }
+    const source = new YouTubeMusicSource(executor, policy, {
+      preloadFirstSearchResult: true,
+      searchClient: {
+        async search() {
+          return parseSearchOutput(fixture)
+        },
+      },
+    })
+
+    // When
+    const results = await source.search("Daft Punk")
+    expect(executions).toBe(1)
+    const first = results.at(0)
+    if (first === undefined) throw new RangeError("Expected a search result")
+    await source.resolve(first.track)
+
+    // Then
+    expect(executions).toBe(1)
+  })
+
   it("Given a YouTube query When search runs Then metadata comes from the low-latency search client", async () => {
     // Given
     let processExecutions = 0
@@ -584,6 +660,10 @@ describe("YouTube yt-dlp boundary", () => {
 
     // Then
     expect(args).toContain("--cookies")
+    expect(args).not.toContain("--dump-single-json")
+    expect(args.at(args.indexOf("--print") + 1)).toBe(
+      "%(.{url,http_headers,ext,acodec,abr,protocol})#j",
+    )
     expect(args.at(args.indexOf("--cookies") + 1)).toBe("/run/secrets/youtube.cookies.txt")
     expect(args.at(-1)).toBe("https://music.youtube.com/watch?v=abc")
   })

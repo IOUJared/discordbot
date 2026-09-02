@@ -87,6 +87,7 @@ type YouTubeMusicSourceOptions = {
   readonly searchCacheCapacity?: number
   readonly youtubeCookiesPath?: string
   readonly searchClient?: YouTubeSearchClient
+  readonly preloadFirstSearchResult?: boolean
 }
 
 type SearchCacheEntry = {
@@ -97,6 +98,13 @@ type SearchCacheEntry = {
 type PlaylistCacheEntry = {
   readonly expiresAt: number
   readonly playlist: YouTubePlaylist
+}
+
+type PendingResolution = {
+  readonly trackId: string
+  readonly expiresAt: number
+  readonly controller: AbortController
+  readonly outcome: Promise<PlayableMedia | undefined>
 }
 
 export function parseSearchOutput(output: string): readonly SearchResult[] {
@@ -178,8 +186,11 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
   private readonly searchCacheCapacity: number
   private readonly youtubeCookiesPath: string | undefined
   private readonly searchClient: YouTubeSearchClient
+  private readonly preloadFirstSearchResult: boolean
   private readonly searchCache = new Map<string, SearchCacheEntry>()
+  private readonly pendingSearches = new Map<string, Promise<readonly SearchResult[]>>()
   private readonly playlistCache = new Map<string, PlaylistCacheEntry>()
+  private pendingResolution: PendingResolution | undefined
 
   constructor(
     private readonly executor: ProcessExecutor = nodeProcessExecutor,
@@ -191,28 +202,42 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
     this.searchCacheCapacity = options.searchCacheCapacity ?? defaultSearchCacheCapacity
     this.youtubeCookiesPath = options.youtubeCookiesPath
     this.searchClient = options.searchClient ?? youtubeSearchClient
+    this.preloadFirstSearchResult =
+      options.preloadFirstSearchResult ?? options.searchClient === undefined
   }
 
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
     const cacheKey = query.trim().toLocaleLowerCase()
     const cached = this.searchCache.get(cacheKey)
     if (cached !== undefined && cached.expiresAt > this.now()) {
+      this.preload(cached.results.at(0)?.track)
       return cached.results
     }
     this.searchCache.delete(cacheKey)
 
-    const results = await this.searchClient.search(query, signal)
-    if (this.searchCache.size >= this.searchCacheCapacity) {
-      const oldest = this.searchCache.keys().next()
-      if (!oldest.done) {
-        this.searchCache.delete(oldest.value)
+    const inFlight = this.pendingSearches.get(cacheKey)
+    if (inFlight !== undefined) return inFlight
+    const request = (async () => {
+      try {
+        const results = await this.searchClient.search(query, signal)
+        if (this.searchCache.size >= this.searchCacheCapacity) {
+          const oldest = this.searchCache.keys().next()
+          if (!oldest.done) {
+            this.searchCache.delete(oldest.value)
+          }
+        }
+        this.searchCache.set(cacheKey, {
+          expiresAt: this.now() + this.searchCacheTtlMs,
+          results,
+        })
+        this.preload(results.at(0)?.track)
+        return results
+      } finally {
+        this.pendingSearches.delete(cacheKey)
       }
-    }
-    this.searchCache.set(cacheKey, {
-      expiresAt: this.now() + this.searchCacheTtlMs,
-      results,
-    })
-    return results
+    })()
+    this.pendingSearches.set(cacheKey, request)
+    return request
   }
 
   async playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist> {
@@ -268,7 +293,41 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
     throw new RadioPlaylistNotFoundError(genre)
   }
 
+  private preload(track: Track | undefined): void {
+    if (!this.preloadFirstSearchResult || track === undefined) return
+    if (
+      this.pendingResolution?.trackId === track.id &&
+      this.pendingResolution.expiresAt > this.now()
+    ) {
+      return
+    }
+    this.pendingResolution?.controller.abort()
+    const controller = new AbortController()
+    this.pendingResolution = {
+      trackId: track.id,
+      expiresAt: this.now() + this.searchCacheTtlMs,
+      controller,
+      outcome: this.resolveRemote(track, controller.signal).catch(() => undefined),
+    }
+  }
+
   async resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
+    const pending = this.pendingResolution
+    if (pending?.trackId === track.id && pending.expiresAt > this.now()) {
+      this.pendingResolution = undefined
+      const abort = () => pending.controller.abort()
+      signal?.addEventListener("abort", abort, { once: true })
+      try {
+        const media = await pending.outcome
+        if (media !== undefined) return media
+      } finally {
+        signal?.removeEventListener("abort", abort)
+      }
+    }
+    return this.resolveRemote(track, signal)
+  }
+
+  private async resolveRemote(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
     const parsedTrack = TrackSchema.parse(track)
     if (parsedTrack.provider !== "youtube") {
       throw new RangeError("Track is not a YouTube track")
@@ -285,11 +344,12 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
       file: "yt-dlp",
       args: [
         ...(this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]),
-        "--dump-single-json",
         "--no-playlist",
         "--no-warnings",
         "-f",
         "bestaudio",
+        "--print",
+        "%(.{url,http_headers,ext,acodec,abr,protocol})#j",
         playbackUrl,
       ],
       timeoutMs: processTimeoutMs,

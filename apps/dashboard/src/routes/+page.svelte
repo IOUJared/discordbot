@@ -108,6 +108,7 @@
   let displayPosition = $state(0)
   let seekPreviewing = $state(false)
   let seekSequence = 0
+  let searchController: AbortController | null = null
   let seekTimer: ReturnType<typeof setTimeout> | null = null
   let disconnect: (() => void) | null = null
   const store = typeof sessionStorage === "undefined" ? null : createSessionStore(sessionStorage)
@@ -197,7 +198,7 @@
       positionTimer = setInterval(() => { if (seekPreviewing || snapshot?.player.currentItem === null || snapshot?.player.currentItem === undefined) return; displayPosition = interpolatePosition({ positionMs: snapshot.player.positionMs, durationMs: snapshot.player.currentItem.track.durationMs, paused: snapshot.player.isPaused, observedAtMs: observedAt }, Date.now()) }, 250)
     }
     void start()
-    return () => { disconnect?.(); if (positionTimer !== null) clearInterval(positionTimer); if (seekTimer !== null) clearTimeout(seekTimer) }
+    return () => { disconnect?.(); searchController?.abort(); if (positionTimer !== null) clearInterval(positionTimer); if (seekTimer !== null) clearTimeout(seekTimer) }
   })
 
   async function logout(): Promise<void> { try { await api.logout() } catch (caught) { if (!(caught instanceof DashboardApiError)) throw caught } store?.clear(); disconnect?.(); session = null; snapshot = null }
@@ -210,20 +211,27 @@
     } catch (caught) { error = explain(caught) } finally { busy = false }
   }
   async function search(query: string): Promise<void> {
+    searchController?.abort()
+    const controller = new AbortController()
+    searchController = controller
     searchLoading = true
     searchError = null
     importedCount = null
     try {
       if (/^https:\/\/(?:www\.|m\.)?youtube\.com\/.*[?&]list=[^&]+/iu.test(query.trim())) {
         playlistUrl = query.trim()
-        playlist = await api.previewPlaylist(playlistUrl)
+        playlist = await api.previewPlaylist(playlistUrl, controller.signal)
         searchResults = []
       } else {
         playlistUrl = ""
-        searchResults = await api.search(query)
+        searchResults = await api.search(query, controller.signal)
         playlist = null
       }
-    } catch (caught) { searchError = explain(caught) } finally { searchLoading = false }
+    } catch (caught) {
+      if (!controller.signal.aborted) searchError = explain(caught)
+    } finally {
+      if (searchController === controller) { searchController = null; searchLoading = false }
+    }
   }
   async function importPlaylist(): Promise<void> {
     if (snapshot === null || playlist === null) return

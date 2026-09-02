@@ -3,11 +3,16 @@ import { createServer, get, type IncomingMessage } from "node:http"
 import { get as getSecure } from "node:https"
 import { PassThrough, type Readable } from "node:stream"
 
-import { type RemoteMediaPolicy, remoteMediaPolicy } from "../media/media-url-policy.js"
+import {
+  type RemoteMediaPolicy,
+  RemoteMediaUrlSchema,
+  remoteMediaPolicy,
+} from "../media/media-url-policy.js"
 import type { RemotePlayableMedia } from "../media/types.js"
 
 const directTimeoutMs = 20_000
-export const playbackBufferBytes = 32 * 1024
+const maximumRedirects = 3
+export const playbackBufferBytes = 16 * 1024
 const playbackHighWaterMarkBytes = 512 * 1024
 
 export class DirectMediaError extends Error {
@@ -65,6 +70,14 @@ export async function openDirectStream(
   media: RemotePlayableMedia,
   options: DirectStreamOptions = {},
 ): Promise<IncomingMessage> {
+  return openAuthorizedStream(media, options, 0)
+}
+
+async function openAuthorizedStream(
+  media: RemotePlayableMedia,
+  options: DirectStreamOptions,
+  redirectCount: number,
+): Promise<IncomingMessage> {
   const target = await (options.policy ?? remoteMediaPolicy).authorize(media.url)
   return new Promise((resolve, reject) => {
     const url = new URL(target.url)
@@ -85,6 +98,30 @@ export async function openDirectStream(
       (response) => {
         request.setTimeout(0)
         const status = response.statusCode ?? 0
+        const location = response.headers.location
+        if (status >= 300 && status < 400 && location !== undefined) {
+          response.destroy()
+          if (redirectCount >= maximumRedirects) {
+            reject(new DirectMediaError("Direct media exceeded its redirect limit"))
+            return
+          }
+          try {
+            const redirectUrl = RemoteMediaUrlSchema.parse(new URL(location, media.url).toString())
+            void openAuthorizedStream(
+              { ...media, url: redirectUrl },
+              options,
+              redirectCount + 1,
+            ).then(resolve, reject)
+          } catch (error) {
+            reject(
+              new DirectMediaError(
+                "Direct media redirected to a disallowed destination",
+                error instanceof Error ? error : undefined,
+              ),
+            )
+          }
+          return
+        }
         if (status < 200 || status >= 300) {
           response.destroy()
           reject(new DirectMediaError(`Direct media returned HTTP ${status}`))
