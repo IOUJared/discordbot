@@ -101,17 +101,17 @@ export class RolloutSearch {
       ...(signal === undefined ? {} : { signal }),
       run: async (shadowSignal) => {
         const remote = await this.sidecarSearch(query, shadowSignal)
-        this.dependencies.setState("ready")
-        this.dependencies.event("sidecar_outcome", { correlationId })
         const localIds = local.map(({ track }) => track.id)
         const remoteIds = remote.map(({ track }) => track.id)
-        this.dependencies.event(
+        const matches =
           localIds.length === remoteIds.length &&
-            localIds.every((id, index) => id === remoteIds.at(index))
-            ? "shadow_match"
-            : "shadow_mismatch",
-          { correlationId, trackIds: localIds },
-        )
+          localIds.every((id, index) => id === remoteIds.at(index))
+        this.dependencies.setState(matches ? "ready" : "degraded")
+        this.dependencies.event("sidecar_outcome", { correlationId })
+        this.dependencies.event(matches ? "shadow_match" : "shadow_mismatch", {
+          correlationId,
+          trackIds: localIds,
+        })
       },
     })
     return local

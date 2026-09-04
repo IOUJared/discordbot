@@ -7,7 +7,10 @@ import { z } from "zod"
 
 import { RemoteMediaUrlSchema } from "../../src/media/media-url-policy.js"
 import type { PlayableMedia } from "../../src/media/types.js"
-import { createYouTubeExtractorRollout } from "../../src/media/youtube-extractor-rollout.js"
+import {
+  createYouTubeExtractorRollout,
+  type ExtractorRolloutObservation,
+} from "../../src/media/youtube-extractor-rollout.js"
 
 const track = TrackSchema.parse({
   id: "advanced-track",
@@ -91,16 +94,20 @@ describe("YouTube extractor rollout advanced lifecycle", () => {
     expect(rollout.pendingShadow()).toBe(0)
   })
 
-  it("emits a mismatch only when local and Rust search track IDs differ", async () => {
-    const stages: string[] = []
+  it("degrades for a search mismatch and recovers after a later match", async () => {
+    const observations: ExtractorRolloutObservation[] = []
+    let sidecarSearchCalls = 0
     const rollout = createYouTubeExtractorRollout({
       mode: "shadow",
       local: { resolve: async () => media },
       localSearch: { search: async () => localSearch },
-      observe: (event) => stages.push(event.stage),
+      observe: (event) => observations.push(event),
       createSidecar: () => ({
         resolve: async () => media,
-        search: async () => remoteSearch,
+        search: async () => {
+          sidecarSearchCalls += 1
+          return sidecarSearchCalls === 1 ? remoteSearch : localSearch
+        },
         close: async () => undefined,
       }),
     })
@@ -108,8 +115,18 @@ describe("YouTube extractor rollout advanced lifecycle", () => {
     await expect(rollout.search("advanced")).resolves.toEqual(localSearch)
     await rollout.drain()
 
-    expect(stages).toContain("shadow_mismatch")
-    expect(stages).not.toContain("shadow_match")
+    expect(rollout.state()).toBe("degraded")
+    expect(observations.find(({ stage }) => stage === "shadow_mismatch")).toMatchObject({
+      state: "degraded",
+    })
+
+    await expect(rollout.search("advanced")).resolves.toEqual(localSearch)
+    await rollout.drain()
+
+    expect(rollout.state()).toBe("ready")
+    expect(observations.find(({ stage }) => stage === "shadow_match")).toMatchObject({
+      state: "ready",
+    })
     await rollout.close()
   })
 
