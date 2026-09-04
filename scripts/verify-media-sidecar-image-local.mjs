@@ -48,9 +48,11 @@ export function localVerify(values, required, assertText) {
     "static-deno-health",
   )
   const sidecarService = production.split("\n  media-sidecar:")[1]?.split("\n  dashboard:")[0] ?? ""
-  const deployedServer = deployment.match(/\n  server:\n([\s\S]+?)(?=\n  [a-z][a-z-]*:|\nvolumes:)/u)?.[1] ?? ""
+  const deployedServer =
+    deployment.match(/\n {2}server:\n([\s\S]+?)(?=\n {2}[a-z][a-z-]*:|\nvolumes:)/u)?.[1] ?? ""
   const deployedSidecar =
-    deployment.match(/\n  media-sidecar:\n([\s\S]+?)(?=\n  [a-z][a-z-]*:|\nvolumes:)/u)?.[1] ?? ""
+    deployment.match(/\n {2}media-sidecar:\n([\s\S]+?)(?=\n {2}[a-z][a-z-]*:|\nvolumes:)/u)?.[1] ??
+    ""
   assertText(
     sidecarService.includes('expose:\n      - "3101"') && !/^\s+ports:/mu.test(sidecarService),
     "static-no-publish",
@@ -58,10 +60,10 @@ export function localVerify(values, required, assertText) {
   assertText(
     deployedServer !== "" &&
       deployedSidecar !== "" &&
-      !/\n    depends_on:/u.test(deployedServer) &&
-      !/\n    links:/u.test(deployedServer) &&
+      !/\n {4}depends_on:/u.test(deployedServer) &&
+      !/\n {4}links:/u.test(deployedServer) &&
       deployedSidecar.includes('expose: ["3101"]') &&
-      !/\n    ports:/u.test(deployedSidecar),
+      !/\n {4}ports:/u.test(deployedSidecar),
     "static-independent-node-startup",
   )
   assertText(
