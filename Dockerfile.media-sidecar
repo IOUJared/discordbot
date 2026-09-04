@@ -6,7 +6,9 @@ COPY apps/media-sidecar/src ./src
 RUN short_sha="$(printf '%.12s' "$BUILD_SHA")" \
     && printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$short_sha" >/usr/local/bin/git \
     && chmod 0755 /usr/local/bin/git \
-    && cargo build --release --locked --bin discord-music-media-sidecar
+    && cargo build --release --locked --bin discord-music-media-sidecar \
+    && install -D -m 0755 target/release/discord-music-media-sidecar /out/discord-music-media-sidecar \
+    && rm -rf target
 
 FROM debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS tools
 RUN apt-get update \
@@ -42,7 +44,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 sidecar \
     && useradd --system --uid 10001 --gid sidecar --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin sidecar
-COPY --from=build /source/target/release/discord-music-media-sidecar /usr/local/bin/discord-music-media-sidecar
+COPY --from=build /out/discord-music-media-sidecar /usr/local/bin/discord-music-media-sidecar
 COPY --from=tools /out/yt-dlp /usr/local/bin/yt-dlp
 COPY --from=tools /out/deno /usr/local/bin/deno
 ENV PATH=/usr/local/bin:/usr/bin:/bin \

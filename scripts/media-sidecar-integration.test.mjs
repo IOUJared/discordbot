@@ -294,6 +294,13 @@ test("server image makes the Corepack node-gyp launcher executable", () => {
   assert.match(dockerfile, /pnpm --version[\s\S]+node-gyp\/gyp\/gyp_main\.py[\s\S]+chmod 0755/u)
 })
 
+test("sidecar builder does not retain release intermediates in its image layer", () => {
+  const dockerfile = readFileSync(new URL("../Dockerfile.media-sidecar", import.meta.url), "utf8")
+  assert.match(dockerfile, /install[^\n]+target\/release\/discord-music-media-sidecar \/out\//u)
+  assert.match(dockerfile, /rm -rf target/u)
+  assert.match(dockerfile, /COPY --from=build \/out\/discord-music-media-sidecar/u)
+})
+
 test("live resolve uses the first non-empty acceptance result", () => {
   const benchmark = readFileSync(new URL("./media-sidecar-benchmark.mjs", import.meta.url), "utf8")
   assert.match(benchmark, /first\.flatMap\(\(\{ results \}\) => results\)\.at\(0\)/u)
