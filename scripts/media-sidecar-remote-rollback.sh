@@ -337,8 +337,41 @@ preflight() {
     --arg lease "$lease_state" --arg restore "$restore_state" --arg snapshot "$after" \
     '{ok:true,readOnly:true,trackedClean:$trackedClean,managedLegacyConfig:$managedLegacyConfig,protectedConfig:true,sha:$sha,configHash:$configHash,lease:$lease,restoreState:$restore,writeSnapshot:$snapshot}'
 }
+validate_begin_recovery_paths_locked() {
+  local current="${1:-}" artifact name run_id manifest terminal binding
+  local -a artifacts=()
+  MS_RECOVERY_FINAL_BINDINGS=""
+  shopt -s nullglob
+  artifacts=("$MS_BACKUP"/.[1-9]*.tmp "$MS_BACKUP"/[1-9]*)
+  shopt -u nullglob
+  for artifact in "${artifacts[@]}"; do
+    name="${artifact##*/}"; run_id="$name"
+    if [[ "$name" =~ ^\.([1-9][0-9]*-[0-9a-f]{32})\.tmp$ ]]; then
+      run_id="${BASH_REMATCH[1]}"
+    elif [[ ! "$name" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]]; then
+      continue
+    fi
+    test ! -L "$artifact" && test -d "$artifact" || die begin-recovery-artifact-invalid
+    test "$(stat -c %u:%a "$artifact")" = "$MS_EXPECT_UID:700" || die begin-recovery-artifact-invalid
+    [[ "$name" = .* ]] && continue
+    if test "$run_id" = "$current"; then
+      binding="$(stat -c %d:%i "$artifact")" || die begin-recovery-artifact-invalid
+      MS_RECOVERY_FINAL_BINDINGS+="$run_id=$binding"$'\n'
+      continue
+    fi
+    test -e "$artifact/.begin-pending" || test -L "$artifact/.begin-pending" || {
+      manifest="$artifact/manifest.json"; terminal="$artifact/terminal.json"
+      secure_owner_path "$artifact" checkpoint || die begin-recovery-archive-invalid
+      validate_cleanup_archive "$manifest" "$terminal" "$run_id" || die begin-recovery-archive-invalid
+      test "$(sha256sum "$artifact/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || die begin-recovery-archive-invalid
+      test "$(sha256sum "$artifact/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$manifest")" || die begin-recovery-archive-invalid
+      binding="$(stat -c %d:%i "$artifact")" || die begin-recovery-archive-invalid
+      MS_RECOVERY_FINAL_BINDINGS+="$run_id=$binding"$'\n'
+    }
+  done
+}
 recover_begin_runs_locked() {
-  python3 - "$MS_BACKUP" "$MS_COUNTER" "${1:-}" "$MS_EXPECT_UID" 2>/dev/null <<'PY'
+  python3 - "$MS_BACKUP" "$MS_COUNTER" "${1:-}" "$MS_EXPECT_UID" "$MS_RECOVERY_FINAL_BINDINGS" 2>/dev/null <<'PY'
 import json
 import os
 import re
@@ -346,9 +379,17 @@ import shutil
 import stat
 import sys
 
-backup, counter, current, uid_value = sys.argv[1:]
+backup, counter, current, uid_value, bindings_value = sys.argv[1:]
 uid = int(uid_value)
-counter_value = int(open(counter, encoding="ascii").read().strip()) if os.path.exists(counter) else 0
+bindings = dict(line.split("=", 1) for line in bindings_value.splitlines())
+counter_value = 0
+if os.path.lexists(counter):
+    value = os.lstat(counter)
+    if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o600:
+        raise ValueError("unsafe counter")
+    raw = open(counter, encoding="ascii").read()
+    if not raw.endswith("\n") or not raw[:-1].isdigit(): raise ValueError("invalid counter")
+    counter_value = int(raw[:-1])
 run_pattern = re.compile(r"^([1-9][0-9]*)-([0-9a-f]{32})$")
 temp_pattern = re.compile(r"^\.([1-9][0-9]*-[0-9a-f]{32})\.tmp$")
 
@@ -377,34 +418,54 @@ def marker_for(path):
         raise ValueError("invalid pending generation")
     return marker
 
-changed = False
+actions = []
+max_generation = counter_value
 for name in sorted(os.listdir(backup)):
     lease_stage = re.fullmatch(r"active\.json\.begin\.([1-9][0-9]*-[0-9a-f]{32})\.tmp", name)
     if lease_stage:
         value = os.lstat(os.path.join(backup, name))
         generation = int(lease_stage.group(1).split("-", 1)[0])
-        if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o600 or generation > counter_value:
+        if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o600:
             raise ValueError("unsafe pending lease")
-        os.unlink(os.path.join(backup, name)); changed = True
+        max_generation = max(max_generation, generation)
+        actions.append(("unlink", os.path.join(backup, name)))
         continue
     path = os.path.join(backup, name)
     match = temp_pattern.fullmatch(name)
     run_id = match.group(1) if match else name
     if not match and not run_pattern.fullmatch(name): continue
-    try: marker = marker_for(path)
-    except FileNotFoundError: continue
-    if marker["runId"] != run_id or marker["generation"] > counter_value:
-        raise ValueError("unbound pending checkpoint")
+    value = os.lstat(path)
+    if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o700:
+        raise ValueError("unsafe owner artifact")
+    generation = int(run_id.split("-", 1)[0]); max_generation = max(max_generation, generation)
     marker_path = os.path.join(path, ".begin-pending")
+    if not os.path.lexists(marker_path):
+        if match: actions.append(("remove", path))
+        elif bindings.get(run_id) != f"{value.st_dev}:{value.st_ino}": raise ValueError("canonical archive replaced")
+        continue
+    marker = marker_for(path)
+    if marker["runId"] != run_id or marker["generation"] != generation:
+        raise ValueError("unbound pending checkpoint")
     if run_id == current and not match:
-        os.unlink(marker_path)
-        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        actions.append(("unlink-marker", marker_path))
+    else:
+        actions.append(("remove", path))
+if max_generation > counter_value:
+    staged = f"{counter}.recover.{os.getpid()}"
+    with open(staged, "w", encoding="ascii") as target:
+        target.write(f"{max_generation}\n"); target.flush(); os.fsync(target.fileno())
+    os.chmod(staged, 0o600); os.replace(staged, counter)
+    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+for action, path in actions:
+    if action == "remove": shutil.rmtree(path)
+    else: os.unlink(path)
+    if action == "unlink-marker":
+        directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
         try: os.fsync(directory)
         finally: os.close(directory)
-    else:
-        shutil.rmtree(path)
-    changed = True
-if changed:
+if actions:
     directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
     try: os.fsync(directory)
     finally: os.close(directory)
@@ -732,6 +793,7 @@ begin_run() {
     test "$(sha256sum "$MS_BACKUP/$prior_id/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$prior_manifest")" || die prior-checkpoint-invalid
     test "$(sha256sum "$MS_BACKUP/$prior_id/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$prior_manifest")" || die prior-checkpoint-invalid
   fi
+  validate_begin_recovery_paths_locked "$prior_id"
   recover_begin_runs_locked "$prior_id" || die begin-recovery-failed
   cleanup_retention_locked "$prior_id"
   local generation random run_id temp run config working env_file state health cursor now deadline

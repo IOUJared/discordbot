@@ -9,7 +9,9 @@ export function installOwnerAdapters(bin) {
 test "${"$"}{1:-}" = -u && printf '0\\n'
 `,
     stat: `#!/usr/bin/env bash
-if test "$*" = "-c %U:%G:%a $TEST_LOCK"; then printf 'root:root:600\\n'; else /usr/bin/stat "$@"; fi
+if test "$*" = "-c %U:%G:%a $TEST_LOCK"; then printf 'root:root:600\\n'
+elif test -n "${"$"}{WRONG_ARTIFACT_OWNER_PATH:-}" && test "$*" = "-c %u:%a $WRONG_ARTIFACT_OWNER_PATH"; then printf '1001:700\\n'
+else /usr/bin/stat "$@"; fi
 `,
     curl: '#!/usr/bin/env bash\nprintf \'%s\\n\' \'{"status":"ok","discord":"ready","voice":"idle","uptime":10}\'\n',
     git: `#!/usr/bin/env bash

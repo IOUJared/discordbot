@@ -163,7 +163,7 @@ export const PROOFS = new Map([
       ],
       [
         "scripts/media-sidecar-remote-rollback.sh",
-        /recover_begin_runs_locked\(\)[\s\S]+allocate_generation_locked\(\)[\s\S]+os\.replace\(staged, counter\)[\s\S]+publish_begin_run_locked\(\)[\s\S]+os\.replace\(temp, run\)[\s\S]+os\.replace\(lease_staged, lease\)[\s\S]+publish_begin_run_locked "\$temp" "\$run"/u,
+        /validate_begin_recovery_paths_locked\(\)[\s\S]+recover_begin_runs_locked\(\)[\s\S]+max_generation[\s\S]+allocate_generation_locked\(\)[\s\S]+os\.replace\(staged, counter\)[\s\S]+publish_begin_run_locked\(\)[\s\S]+os\.replace\(temp, run\)[\s\S]+os\.replace\(lease_staged, lease\)[\s\S]+publish_begin_run_locked "\$temp" "\$run"/u,
       ],
     ],
   ],
