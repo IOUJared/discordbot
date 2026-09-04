@@ -155,7 +155,10 @@ function remoteRun(values, mode) {
     !result.stdout.includes(`checkpoint=${sha}`)
   ) {
     const failure = result.stdout.match(/failure_stage=([a-z-]+)/u)?.[1] ?? "unknown"
-    throw new VerifierError(`remote-${failure}`)
+    const saturation = ["four_latched", "deno_latched", "environment_observed"]
+      .map((name) => result.stdout.match(new RegExp(`${name}=([a-z-]+)`, "u"))?.[1] ?? "unknown")
+      .join("-")
+    throw new VerifierError(`remote-${failure}-${saturation}`)
   }
   return result.stdout.trim()
 }
