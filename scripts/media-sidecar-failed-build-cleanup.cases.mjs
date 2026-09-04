@@ -197,6 +197,7 @@ exit 1
       removedContainers,
       removedImages,
       run,
+      historicalRun,
       writeScenario,
     })
   } finally {

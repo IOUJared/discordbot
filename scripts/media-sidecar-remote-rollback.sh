@@ -29,17 +29,43 @@ atomic_file() {
   mv -f "$temp" "$target"
   sync -f "$(dirname "$target")"
 }
-lease_value() { jq -er "$1" "$MS_LEASE"; }
+strict_json_file() {
+  python3 - "$1" 2>/dev/null <<'PY'
+import json
+import sys
+
+def unique_object(pairs):
+    value = {}
+    for key, member in pairs:
+        if key in value:
+            raise ValueError("duplicate object member")
+        value[key] = member
+    return value
+
+def invalid_constant(_value):
+    raise ValueError("non-JSON numeric constant")
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    json.load(source, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+PY
+}
+lease_value() { strict_json_file "$MS_LEASE" || die lease-json-invalid; jq -er "$1" "$MS_LEASE"; }
 lease_write() { atomic_file "$MS_LEASE" 0600; }
 cleanup_retention_locked() {
   local current candidate run_id manifest terminal server_tag sidecar_tag
-  current="$(test -r "$MS_LEASE" && lease_value .runId || true)"
+  if test -r "$MS_LEASE"; then
+    strict_json_file "$MS_LEASE" || die lease-json-invalid
+    current="$(jq -er .runId "$MS_LEASE")"
+  else
+    current=""
+  fi
   while IFS= read -r -d '' candidate; do
     run_id="${candidate##*/}"
     [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
     test "$run_id" != "$current" || continue
     manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
     test -f "$manifest" && test -f "$terminal" || continue
+    strict_json_file "$manifest" && strict_json_file "$terminal" || die retention-json-invalid
     jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '.schema==$schema and .runId==$runId and (.selectedSha|test("^[0-9a-f]{40}$"))' "$manifest" >/dev/null || continue
     jq -e --arg runId "$run_id" '.runId==$runId and (.state=="committed" or (.state=="expired" and .restoreState=="restored"))' "$terminal" >/dev/null || continue
     test "$(sha256sum "$candidate/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || continue
@@ -53,6 +79,7 @@ cleanup_retention_locked() {
 cleanup_stale_lease_temps_locked() {
   local candidate name pid now modified
   if test -r "$MS_LEASE"; then
+    strict_json_file "$MS_LEASE" || die lease-json-invalid
     jq -e '(.state != "active") and (.restoreState != "restoring") and (.activeMutation == null)' "$MS_LEASE" >/dev/null || return 0
   fi
   now="$(date +%s)"
@@ -115,6 +142,7 @@ repair_retained_tags_locked() {
     run_id="${candidate##*/}"; [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
     manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
     test -r "$manifest" && test -r "$terminal" || continue
+    strict_json_file "$manifest" && strict_json_file "$terminal" || die retention-json-invalid
     jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '.schema==$schema and .runId==$runId and (.selectedSha|test("^[0-9a-f]{40}$"))' "$manifest" >/dev/null || continue
     jq -e --arg runId "$run_id" '.runId==$runId and (.state=="committed" or (.state=="expired" and .restoreState=="restored"))' "$terminal" >/dev/null || continue
     test "$(sha256sum "$candidate/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || continue
@@ -161,6 +189,7 @@ preflight() {
   test -r "$MS_REPO/.git/HEAD" || die repository-missing
   git -C "$MS_REPO" diff --quiet && git -C "$MS_REPO" diff --cached --quiet || die tracked-tree-dirty
   command -v docker >/dev/null; docker info >/dev/null
+  command -v python3 >/dev/null || die python3-missing
   test "$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')" -ge "${MEDIA_MIN_FREE_MIB:-2048}" || die disk-capacity
   local config config_rel status tracked_clean managed_legacy lease_state restore_state before after
   config="$(active_config)"; test -r "$config"; test -r "$(dirname "$config")/.env"
@@ -173,8 +202,12 @@ preflight() {
     tracked_clean=false; managed_legacy=true
   fi
   before="$(test -e "$MS_BACKUP" && find "$MS_BACKUP" -maxdepth 2 -printf '%P:%s:%T@\n' | sort | sha256sum | cut -d' ' -f1 || echo absent)"
-  lease_state="$(test -r "$MS_LEASE" && jq -er .state "$MS_LEASE" || echo absent)"
-  restore_state="$(test -r "$MS_LEASE" && jq -er .restoreState "$MS_LEASE" || echo absent)"
+  if test -r "$MS_LEASE"; then
+    strict_json_file "$MS_LEASE" || die lease-json-invalid
+    lease_state="$(jq -er .state "$MS_LEASE")"; restore_state="$(jq -er .restoreState "$MS_LEASE")"
+  else
+    lease_state=absent; restore_state=absent
+  fi
   after="$(test -e "$MS_BACKUP" && find "$MS_BACKUP" -maxdepth 2 -printf '%P:%s:%T@\n' | sort | sha256sum | cut -d' ' -f1 || echo absent)"
   test "$before" = "$after" || die preflight-write
   jq -cn --arg sha "$(git -C "$MS_REPO" rev-parse HEAD)" --arg configHash "$(sha256sum "$config"|cut -d' ' -f1)" \
@@ -238,7 +271,7 @@ cas_active() {
   test "$(lease_value .sequence)" -eq "$expected" || die stale-sequence
   now="$(boottime)"; test "$now" -lt "$(lease_value .deadlineBoottime)" || die lease-deadline
 }
-lease_replace() { local filter="$1"; jq "$filter" "$MS_LEASE" | lease_write; }
+lease_replace() { local filter="$1"; strict_json_file "$MS_LEASE" || die lease-json-invalid; jq "$filter" "$MS_LEASE" | lease_write; }
 build_operation_allowed() {
   case "$1" in
     build|build-server|build-sidecar) ;;
@@ -249,6 +282,7 @@ validate_build_inputs() {
   local run_id="$1" manifest="$2"
   test "$MS_PROJECT" = deploy || die build-project
   [[ "$MS_SHA" =~ ^[0-9a-f]{40}$ ]] || die build-selected-sha
+  strict_json_file "$manifest" || die build-manifest-json-invalid
   jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$MS_SHA" \
     '.schema==$schema and .runId==$runId and .selectedSha==$sha' "$manifest" >/dev/null || die build-manifest-binding
   test "$(lease_value .runId)" = "$run_id" || die build-run
@@ -287,6 +321,7 @@ build_image() {
 perform() {
   local run_id="$1" sequence="$2" operation="$3" run manifest config working
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
+  strict_json_file "$manifest" || die manifest-json-invalid
   config="$(jq -r .configPath "$manifest")"; working="$(jq -r .workingDir "$manifest")"
   case "$operation" in
     tag-prior)
@@ -418,6 +453,7 @@ mutate() {
 restore_locked() {
   local run_id="$1" run manifest config working server_ref sidecar_ref server_source sidecar_source deadline sample1 sample2 events_since events_until event_count observed_count desired marker
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
+  strict_json_file "$manifest" || die manifest-json-invalid
   config="$(jq -r .configPath "$manifest")"; working="$(jq -r .workingDir "$manifest")"
   server_ref="$(jq -r .priorState.serverRef "$manifest")"; sidecar_ref="$(jq -r '.priorState.sidecarRef // empty' "$manifest")"
   desired="$(jq -r .desiredFingerprint "$manifest")"; marker="$run/restore-first-sample"
@@ -473,6 +509,7 @@ watchdog() {
 delayed_daemon() {
   local run_id="$1" delayed="$2" run manifest config working deadline
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
+  strict_json_file "$manifest" || die manifest-json-invalid
   deadline=$(( $(boottime)+150 )); while test ! -e "$run/restore-first-sample" && test "$(boottime)" -lt "$deadline"; do sleep 1; done
   test -e "$run/restore-first-sample" || exit 1
   sleep 1
@@ -548,6 +585,16 @@ task_event_floor() {
     jq -er --arg schema "$MS_SCHEMA" --arg runId "$run_id" 'select(.schema==$schema and .runId==$runId)|.eventCursor' "$manifest" || continue
   done | sort | head -1
 }
+validate_cleanup_json_records() {
+  local candidate run_id manifest terminal
+  for candidate in "$MS_BACKUP"/*; do
+    test -d "$candidate" || continue; run_id="${candidate##*/}"
+    [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
+    manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
+    test ! -r "$manifest" || strict_json_file "$manifest" || return 1
+    test ! -r "$terminal" || strict_json_file "$terminal" || return 1
+  done
+}
 cleanup_failed_images() {
   local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed removed_containers removed_superseded removed_qa id tags ref revision project prior_server prior_sidecar floor floor_epoch created created_epoch status mounts labels used_images candidates config_image
   local -a selected_refs=() image_ids=() container_ids=() superseded_refs=() qa_refs=()
@@ -558,6 +605,9 @@ cleanup_failed_images() {
   test "$MS_PROJECT" = deploy || die cleanup-project
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
   test -r "$manifest" || die cleanup-manifest-missing
+  strict_json_file "$manifest" || die cleanup-manifest-json-invalid
+  strict_json_file "$MS_LEASE" || die cleanup-lease-json-invalid
+  validate_cleanup_json_records || die cleanup-task-json-invalid
   jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" \
     '.schema==$schema and .runId==$runId and .selectedSha==$sha and (.priorState.serverImage|test("^sha256:[0-9a-f]{64}$")) and ((.priorState.sidecarImage // "")|test("^(|sha256:[0-9a-f]{64})$"))' "$manifest" >/dev/null || die cleanup-manifest-binding
   jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" \
@@ -747,7 +797,8 @@ commit_run() {
   local run_id="$1" expected="$2" next run manifest config cursor events_until observed quiet_since quiet_until quiet_events sample1 sample2 stable_at
   require_root; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"; next=$((expected+1))
   jq -e '.activeMutation==null and (.acceptedOperations|all(.status!="accepted"))' "$MS_LEASE" >/dev/null || die accepted-operation-active
-  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; config="$(jq -r .configPath "$manifest")"; cursor="$(lease_value .eventCursor)"
+  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; strict_json_file "$manifest" || die manifest-json-invalid
+  config="$(jq -r .configPath "$manifest")"; cursor="$(lease_value .eventCursor)"
   events_until="$(date --iso-8601=ns)"
   observed="$(project_mutation_event_count "$cursor" "$events_until")"
   sample1="$(state_fingerprint "$config")"; quiet_since="$(date +%s)"; sleep 5
@@ -759,7 +810,7 @@ commit_run() {
   jq --argjson sequence "$next" --arg cursor "$cursor" --argjson observed "$observed" --argjson stableAt "$stable_at" '.sequence=$sequence | .state="committed" | .restoreState="idle" | .stableSamples=2 | .activeMutation=null | .eventProof={cursor:$cursor,observedCount:$observed,quietWindowEvents:0,stableAtBoottime:$stableAt}' "$MS_LEASE" | lease_write
   jq -cn --arg runId "$run_id" --argjson sequence "$next" --argjson observed "$observed" --argjson stableAt "$stable_at" '{ok:true,runId:$runId,sequence:$sequence,state:"committed",eventProof:{retained:true,observedCount:$observed,quietWindowEvents:0,stableAtBoottime:$stableAt}}'
 }
-state() { require_root; jq -c '{ok:true,runId,generation,selectedSha,sequence,state,restoreState,stableSamples,deadlineClock,lateDaemonDetected,reconcilePasses,eventProof,acceptedOperationCount:(.acceptedOperations|length),acceptedOperationsTerminal:(.acceptedOperations|all(.status!="accepted")),activeOperation:(.activeMutation.operation // null)}' "$MS_LEASE"; }
+state() { require_root; strict_json_file "$MS_LEASE" || die lease-json-invalid; jq -c '{ok:true,runId,generation,selectedSha,sequence,state,restoreState,stableSamples,deadlineClock,lateDaemonDetected,reconcilePasses,eventProof,acceptedOperationCount:(.acceptedOperations|length),acceptedOperationsTerminal:(.acceptedOperations|all(.status!="accepted")),activeOperation:(.activeMutation.operation // null)}' "$MS_LEASE"; }
 
 case "${1:-}" in
   preflight) preflight;;
