@@ -95,7 +95,7 @@ test("tracked deployment config replaces only checkpointed legacy config", () =>
   assert.match(owner, /git -C "\$MS_REPO" status --porcelain/u)
   assert.match(
     owner,
-    /git -C "\$MS_REPO" reset --hard[^\n]+\n    cp "\$run\/compose\.yaml" "\$config"/u,
+    /git -C "\$MS_REPO" reset --hard[^\n]+\n {4}cp "\$run\/compose\.yaml" "\$config"/u,
   )
   assert.doesNotMatch(compose, /discord-music-(?:server|media-sidecar):[0-9a-f]{40}/u)
 })
