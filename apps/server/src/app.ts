@@ -17,6 +17,7 @@ import { registerAuthRoutes } from "./auth/routes.js"
 import type { ExchangeStore, SessionStore } from "./auth/session-auth.js"
 import type { ServerConfig } from "./config.js"
 import { loggerOptions } from "./logger.js"
+import type { SidecarRuntimeObservationSink } from "./media/youtube-sidecar-observation.js"
 import type { DependencyStatus } from "./runtime/dependencies.js"
 import { SnapshotHub } from "./runtime/snapshot-hub.js"
 import { registerWebSocket } from "./runtime/websocket.js"
@@ -38,6 +39,7 @@ export type AppDeps = {
   readonly dependencies: DependencyStatus
   readonly discordReady: () => boolean
   readonly startedAtMs?: number
+  readonly observeMediaSidecar?: SidecarRuntimeObservationSink
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {

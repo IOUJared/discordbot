@@ -10,7 +10,7 @@ import {
 import { buildApp } from "../app.js"
 import { KyDiscordOAuth } from "../auth/discord-oauth.js"
 import { OAuthStateStore } from "../auth/oauth-state.js"
-import type { ServerConfig } from "../config.js"
+import type { ParsedServerConfig } from "../config.js"
 import { openPersistence } from "../db/index.js"
 import { secureRandom } from "../db/random.js"
 import { PlayerCommandService } from "../discord/command-service.js"
@@ -21,7 +21,18 @@ import { wireDiscordPresence } from "../discord/presence-publisher.js"
 import { DiscordAudioResourceFactory } from "../discord/resource-factory.js"
 import { DiscordVoiceGateway } from "../discord/voice-gateway.js"
 import { systemClock } from "../domain/clock.js"
+import { remoteMediaPolicy } from "../media/media-url-policy.js"
+import { nodeProcessExecutor } from "../media/process-executor.js"
 import { YouTubeMusicSource } from "../media/youtube.js"
+import {
+  createYouTubeExtractorRollout,
+  type SidecarExtractorClient,
+  type YouTubeExtractorRollout,
+} from "../media/youtube-extractor-rollout.js"
+import { LocalYouTubeResolver } from "../media/youtube-local-resolver.js"
+import { youtubeSearchClient } from "../media/youtube-search.js"
+import { YouTubeSidecarClient } from "../media/youtube-sidecar-client.js"
+import type { MediaSidecarObservation } from "../media/youtube-sidecar-observation.js"
 import type { PlaybackFailureLog } from "../player/playback-failure.js"
 import { systemScheduler } from "../player/ports.js"
 import { PlayerService } from "../player/service.js"
@@ -41,8 +52,69 @@ export class GuildUnavailableError extends Error {
   }
 }
 
+type ProductionMedia = {
+  readonly source: YouTubeMusicSource
+  readonly rollout: YouTubeExtractorRollout
+}
+
+function sidecarAdapter(
+  baseUrl: string,
+  observe: (event: MediaSidecarObservation) => void,
+): SidecarExtractorClient {
+  const client = new YouTubeSidecarClient({ baseUrl, observe })
+  return {
+    search: (query, signal) => client.search(query, signal),
+    resolve: (track, signal) => client.resolve(track, signal),
+    close: () => client.close(),
+  }
+}
+
+export function createProductionMedia(
+  config: ParsedServerConfig,
+  observe: (event: MediaSidecarObservation) => void,
+): ProductionMedia {
+  const local = new LocalYouTubeResolver(
+    nodeProcessExecutor,
+    remoteMediaPolicy,
+    config.youtubeCookiesPath,
+  )
+  const common = { local, localSearch: youtubeSearchClient, observe }
+  const sidecar = config.mediaSidecar
+  const rollout = (() => {
+    switch (sidecar.mode) {
+      case "disabled":
+        return createYouTubeExtractorRollout({ ...common, mode: "disabled" })
+      case "shadow":
+        return createYouTubeExtractorRollout({
+          ...common,
+          mode: "shadow",
+          createSidecar: () => sidecarAdapter(sidecar.url, observe),
+        })
+      case "rust":
+        return createYouTubeExtractorRollout({
+          ...common,
+          mode: "rust",
+          createSidecar: () => sidecarAdapter(sidecar.url, observe),
+        })
+    }
+  })()
+  return {
+    rollout,
+    source: new YouTubeMusicSource(nodeProcessExecutor, remoteMediaPolicy, {
+      ...(config.youtubeCookiesPath === undefined
+        ? {}
+        : { youtubeCookiesPath: config.youtubeCookiesPath }),
+      searchClient: rollout,
+      extractor: rollout,
+      preloadFirstSearchResult: true,
+      observe,
+      observeSearchResultIds: config.mediaSidecar.mode === "rust",
+    }),
+  }
+}
+
 export async function runProduction(
-  config: ServerConfig,
+  config: ParsedServerConfig,
   dependencies?: DependencyStatus,
 ): Promise<ProductionServer> {
   const checkedDependencies = dependencies ?? (await checkDependencies())
@@ -61,13 +133,8 @@ export async function runProduction(
     clock: systemClock,
     random: secureRandom,
   })
-  const source = new YouTubeMusicSource(
-    undefined,
-    undefined,
-    config.youtubeCookiesPath === undefined
-      ? {}
-      : { youtubeCookiesPath: config.youtubeCookiesPath },
-  )
+  let observeMediaSidecar = (_event: MediaSidecarObservation): void => undefined
+  const { source, rollout } = createProductionMedia(config, (event) => observeMediaSidecar(event))
   const voice = new DiscordVoiceGateway({
     adapterForGuild: () => requireGuild(client, guildId).voiceAdapterCreator,
   })
@@ -111,7 +178,9 @@ export async function runProduction(
     dependencies: checkedDependencies,
     discordReady: () => client.isReady(),
     startedAtMs: Date.now(),
+    observeMediaSidecar: (event) => observeMediaSidecar(event),
   })
+  observeMediaSidecar = (event) => app.log.info(event, event.schema)
   const authorizedUserIds = new Set<UserId>(
     [...config.authorizedUserIds].map((id) => UserIdSchema.parse(id)),
   )
@@ -136,11 +205,17 @@ export async function runProduction(
   try {
     await client.login(config.discordToken)
     return await startServer(app, config, {
-      player,
+      player: {
+        leave: async () => {
+          await rollout.close()
+          await player.leave()
+        },
+      },
       discord: client,
       database: persistence,
     })
   } catch (error) {
+    await rollout.close()
     await player.leave()
     await app.close()
     persistence.close()

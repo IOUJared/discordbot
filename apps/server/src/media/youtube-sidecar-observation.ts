@@ -1,3 +1,5 @@
+import { createHmac, randomBytes, randomUUID } from "node:crypto"
+
 import {
   BitrateKbpsSchema,
   type SearchResult,
@@ -11,6 +13,8 @@ import { RemoteMediaUrlSchema } from "./media-url-policy.js"
 import type { RemotePlayableMedia } from "./types.js"
 
 export const MEDIA_SIDECAR_OBSERVATION_SCHEMA = "media_sidecar_observation.v1" as const
+const observationSalt = randomBytes(32)
+const requestCorrelations = new WeakMap<AbortSignal, string>()
 export type SidecarOperation = "health" | "search" | "resolve"
 export type SidecarFailureKind =
   | "invalid_request"
@@ -31,6 +35,37 @@ export type SidecarClientObservation = {
   readonly outcome?: SidecarFailureKind
 }
 export type SidecarObservationSink = (event: SidecarClientObservation) => void
+
+export type SidecarRuntimeObservation = {
+  readonly schema: typeof MEDIA_SIDECAR_OBSERVATION_SCHEMA
+  readonly stage:
+    | "route_start"
+    | "response_finish"
+    | "disconnect"
+    | "waiter_count"
+    | "in_memory_id_match"
+  readonly correlationId: string
+  readonly waiterCount?: number
+  readonly count?: 1
+  readonly fingerprint?: string
+}
+export type SidecarRuntimeObservationSink = (event: SidecarRuntimeObservation) => void
+export type MediaSidecarObservation =
+  | SidecarClientObservation
+  | SidecarRuntimeObservation
+  | ExtractorRolloutObservation
+
+export function registerRequestCorrelation(signal: AbortSignal, correlationId: string): void {
+  requestCorrelations.set(signal, correlationId)
+}
+
+export function requestCorrelationId(signal: AbortSignal | undefined): string {
+  return signal === undefined ? randomUUID() : (requestCorrelations.get(signal) ?? randomUUID())
+}
+
+export function fingerprintMediaIds(ids: readonly string[]): string {
+  return createHmac("sha256", observationSalt).update(JSON.stringify(ids)).digest("hex")
+}
 
 export type ExtractorRolloutMode = "disabled" | "shadow" | "rust"
 export type ExtractorRolloutState = "disabled" | "unknown" | "ready" | "degraded"

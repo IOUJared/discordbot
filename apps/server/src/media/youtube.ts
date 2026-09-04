@@ -25,6 +25,13 @@ import {
   youtubeRadioSearchArgs,
 } from "./youtube-radio.js"
 import { type YouTubeSearchClient, youtubeSearchClient } from "./youtube-search.js"
+import { YouTubeSearchCoalescer } from "./youtube-search-coalescer.js"
+import {
+  fingerprintMediaIds,
+  MEDIA_SIDECAR_OBSERVATION_SCHEMA,
+  requestCorrelationId,
+  type SidecarRuntimeObservationSink,
+} from "./youtube-sidecar-observation.js"
 
 export { parseResolvedOutput } from "./youtube-output.js"
 export { parsePlaylistOutput, youtubePlaylistArgs } from "./youtube-playlist.js"
@@ -40,6 +47,8 @@ type YouTubeMusicSourceOptions = {
   readonly searchClient?: YouTubeSearchClient
   readonly extractor?: YouTubeExtractor
   readonly preloadFirstSearchResult?: boolean
+  readonly observe?: SidecarRuntimeObservationSink
+  readonly observeSearchResultIds?: boolean
 }
 
 type SearchCacheEntry = {
@@ -67,8 +76,10 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
   private readonly searchClient: YouTubeSearchClient
   private readonly extractor: YouTubeExtractor
   private readonly preloadFirstSearchResult: boolean
+  private readonly observe: SidecarRuntimeObservationSink
+  private readonly observeSearchResultIds: boolean
   private readonly searchCache = new Map<string, SearchCacheEntry>()
-  private readonly pendingSearches = new Map<string, Promise<readonly SearchResult[]>>()
+  private readonly searchCoalescer: YouTubeSearchCoalescer<readonly SearchResult[]>
   private readonly playlistCache = new Map<string, PlaylistCacheEntry>()
   private pendingResolution: PendingResolution | undefined
 
@@ -86,9 +97,14 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
       options.extractor ?? new LocalYouTubeResolver(executor, policy, options.youtubeCookiesPath)
     this.preloadFirstSearchResult =
       options.preloadFirstSearchResult ?? options.searchClient === undefined
+    this.observe = options.observe ?? (() => undefined)
+    this.observeSearchResultIds = options.observeSearchResultIds ?? false
+    this.searchCoalescer = new YouTubeSearchCoalescer(this.observe)
   }
 
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
+    if (signal?.aborted === true) throw new DOMException("The operation was aborted", "AbortError")
+    const correlationId = requestCorrelationId(signal)
     const cacheKey = query.trim().toLocaleLowerCase()
     const cached = this.searchCache.get(cacheKey)
     if (cached !== undefined && cached.expiresAt > this.now()) {
@@ -97,11 +113,12 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
     }
     this.searchCache.delete(cacheKey)
 
-    const inFlight = this.pendingSearches.get(cacheKey)
-    if (inFlight !== undefined) return inFlight
-    const request = (async () => {
-      try {
-        const results = await this.searchClient.search(query, signal)
+    const results = await this.searchCoalescer.run({
+      key: cacheKey,
+      correlationId,
+      ...(signal === undefined ? {} : { signal }),
+      start: async (sharedSignal) => {
+        const results = await this.searchClient.search(query, sharedSignal)
         if (this.searchCache.size >= this.searchCacheCapacity) {
           const oldest = this.searchCache.keys().next()
           if (!oldest.done) {
@@ -114,12 +131,25 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
         })
         this.preload(results.at(0)?.track)
         return results
-      } finally {
-        this.pendingSearches.delete(cacheKey)
-      }
-    })()
-    this.pendingSearches.set(cacheKey, request)
-    return request
+      },
+    })
+    return this.observeSearchResults(correlationId, results)
+  }
+
+  private observeSearchResults(
+    correlationId: string,
+    results: readonly SearchResult[],
+  ): readonly SearchResult[] {
+    if (this.observeSearchResultIds) {
+      this.observe({
+        schema: MEDIA_SIDECAR_OBSERVATION_SCHEMA,
+        stage: "in_memory_id_match",
+        correlationId,
+        count: 1,
+        fingerprint: fingerprintMediaIds(results.map(({ track }) => track.id)),
+      })
+    }
+    return results
   }
 
   async playlist(url: string, signal?: AbortSignal): Promise<YouTubePlaylist> {
