@@ -450,12 +450,12 @@ task_event_floor() {
   done | sort | head -1
 }
 cleanup_failed_images() {
-  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed removed_containers id tags prior_server prior_sidecar pass_removed floor floor_epoch created created_epoch status mounts labels
+  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed removed_containers removed_superseded removed_qa id tags ref revision project prior_server prior_sidecar pass_removed floor floor_epoch created created_epoch status mounts labels
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
   test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state
-  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0
+  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0; removed_superseded=0; removed_qa=0
   prior_server="$(jq -r .priorState.serverImage "$manifest")"; prior_sidecar="$(jq -r '.priorState.sidecarImage // empty' "$manifest")"
   for tags in "discord-music-server:$selected_sha" "discord-music-media-sidecar:$selected_sha"; do
     id="$(docker image inspect -f '{{.Id}}' "$tags" 2>/dev/null || true)"; test -n "$id" || continue
@@ -515,9 +515,25 @@ cleanup_failed_images() {
     done < <(docker images -q --filter dangling=true --no-trunc | sort -u)
     test "$pass_removed" -gt 0 || break
   done
+  while read -r ref; do
+    test -n "$ref" || continue; revision="${ref##*:}"
+    test "$revision" != "$selected_sha" || continue
+    id="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null || true)"; test -n "$id" || continue
+    test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$revision" || continue
+    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+    docker image rm "$ref" >/dev/null; removed_superseded=$((removed_superseded+1))
+  done < <(for candidate in "$MS_BACKUP"/*/manifest.json; do test -r "$candidate" || continue; jq -r '.selectedSha as $sha|["discord-music-server:($sha)","discord-music-media-sidecar:($sha)"][]' "$candidate"; done | sort -u)
+  while read -r ref; do
+    test -n "$ref" || continue
+    id="$(docker image inspect -f '{{.Id}}' "$ref")"
+    project="$(docker image inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$ref")"
+    [[ "$project" == discord-music-sidecar-qa-* ]] || continue
+    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+    docker image rm "$ref" >/dev/null; removed_qa=$((removed_qa+1))
+  done < <(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^discord-music-(node|media-sidecar):qa-[0-9a-f]{40}$' || true)
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
-  jq --argjson removed "$removed" --argjson containers "$removed_containers" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
-  jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
+  jq --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
+  jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
 commit_run() {
   local run_id="$1" expected="$2" next
