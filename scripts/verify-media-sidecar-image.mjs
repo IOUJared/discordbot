@@ -170,7 +170,7 @@ function transfer(values, lxc, root, sha) {
   const directory = mkdtempSync(join(tmpdir(), "media-sidecar-bundle-"))
   const bundle = join(directory, "source.bundle")
   try {
-    execFileSync("git", ["bundle", "create", bundle, sha], { stdio: "ignore" })
+    execFileSync("git", ["bundle", "create", bundle, "HEAD"], { stdio: "ignore" })
     chmodSync(bundle, 0o600)
     const command = `pct exec ${lxc} -- bash -c ${quote('install -d -m 0700 -- "$1"; umask 077; cat >"$1/source.bundle"')} _ ${quote(`${root}/${sha}`)}`
     ssh(values, command, "bundle-transfer", readFileSync(bundle))
