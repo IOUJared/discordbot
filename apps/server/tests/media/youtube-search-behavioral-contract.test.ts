@@ -148,7 +148,8 @@ behavioralContract("Rust and retained Node search behavioral contract", () => {
     const activeClient = client
     if (activeClient === undefined) throw new TypeError("Rust client is unavailable")
     for (const item of sharedCases) {
-      const raw: unknown = JSON.parse(readFileSync(join(fixtureRoot, item.path), "utf8"))
+      const rawWire = readFileSync(join(fixtureRoot, item.path), "utf8")
+      const raw: unknown = JSON.parse(rawWire)
       const fixture = item.expected.fixture
       if (fixture === undefined) throw new TypeError("Expected response fixture is unavailable")
       const expected = responseSchema.parse(
@@ -156,7 +157,7 @@ behavioralContract("Rust and retained Node search behavioral contract", () => {
       ).results
 
       // When: Node parses raw JSON directly and Rust parses those exact bytes over the real HTTP boundary.
-      upstreamBody = JSON.stringify(raw)
+      upstreamBody = rawWire
       expect(parseYouTubeSearchResponse(raw)).toEqual(expected)
       expect(await activeClient.search(`contract-${item.path}`)).toEqual(expected)
     }

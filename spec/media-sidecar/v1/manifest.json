@@ -20,6 +20,33 @@
       "expected": { "outcome": "response", "fixture": "fixtures/responses/search-padding.json" }
     },
     {
+      "path": "raw/innertube-insertion-order.json",
+      "sha256": "b4f21a3482d8cf8650942310db98acf7d15b34a8f59336269042b5ee441352e8",
+      "sourceKind": "innertube",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-search-behavioral-contract.test.ts#normalizes-every-shared-innertube-fixture-identically",
+      "rustConsumer": "planned: apps/media-sidecar/tests/search.rs#search_manifest_parity",
+      "expected": { "outcome": "response", "fixture": "fixtures/responses/search-insertion-order.json" }
+    },
+    {
+      "path": "raw/innertube-integer-order.json",
+      "sha256": "2d0c1aba45ce393287c3b7acfcf69dc1a58a6902181ff4beb4427d32e3759c70",
+      "sourceKind": "innertube",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-search-behavioral-contract.test.ts#normalizes-every-shared-innertube-fixture-identically",
+      "rustConsumer": "planned: apps/media-sidecar/tests/search.rs#search_manifest_parity",
+      "expected": { "outcome": "response", "fixture": "fixtures/responses/search-integer-order.json" }
+    },
+    {
+      "path": "raw/innertube-nested-duplicates-cap.json",
+      "sha256": "144906d7eeec7701dd8a9c26833ceefdd86752b353970710fabe3ccc55069867",
+      "sourceKind": "innertube",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-search-behavioral-contract.test.ts#normalizes-every-shared-innertube-fixture-identically",
+      "rustConsumer": "planned: apps/media-sidecar/tests/search.rs#search_manifest_parity",
+      "expected": { "outcome": "response", "fixture": "fixtures/responses/search-nested-duplicates-cap.json" }
+    },
+    {
       "path": "raw/ytdlp-resolve-valid.json",
       "sha256": "5bc688fd03e54ea815571e5541c7c7ae61427c7cc999f2b6ae7dfc21bc49d797",
       "sourceKind": "yt-dlp",

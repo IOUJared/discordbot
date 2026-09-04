@@ -137,11 +137,14 @@ function validateOrdinals(manifest) {
     assert.ok(item)
     assert.deepEqual(item.expected, { outcome: "response", fixture: expected.fixturePath })
     const raw = json(item.path)
-    assert.equal(raw.contents.length, expected.rawSlots)
-    assert.deepEqual(
-      [raw.contents[0], raw.contents[1], raw.contents[5]].map(({ videoRenderer }) => videoRenderer.videoId),
-      expected.rawSlotIds,
-    )
+    if (expected.rawSlots === undefined) assert.deepEqual(Object.keys(raw), expected.rawKeys)
+    else {
+      assert.equal(raw.contents.length, expected.rawSlots)
+      assert.deepEqual(
+        [raw.contents[0], raw.contents[1], raw.contents[5]].map(({ videoRenderer }) => videoRenderer.videoId),
+        expected.rawSlotIds,
+      )
+    }
     const results = json(item.expected.fixture).results
     assert.deepEqual(
       results.map(({ track, score, bitrateKbps }) => [track.id, track.title, track.artist, track.durationMs, score, bitrateKbps]),

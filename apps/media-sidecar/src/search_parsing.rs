@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use url::Url;
 
 use super::{SearchError, SearchResponse, SearchResult, Track};
@@ -73,9 +73,11 @@ fn collect_renderers<'a>(value: &'a Value, output: &mut Vec<&'a Value>) {
         Value::Object(object) => {
             if let Some(renderer) = object.get("videoRenderer") {
                 output.push(renderer);
-                return;
+                if output.len() >= MAXIMUM_RENDERERS {
+                    return;
+                }
             }
-            for value in object.values() {
+            for value in node_object_values(object) {
                 collect_renderers(value, output);
                 if output.len() >= MAXIMUM_RENDERERS {
                     break;
@@ -84,6 +86,30 @@ fn collect_renderers<'a>(value: &'a Value, output: &mut Vec<&'a Value>) {
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
+}
+
+fn node_object_values(object: &Map<String, Value>) -> Vec<&Value> {
+    let mut indexed = object
+        .iter()
+        .filter_map(|(key, value)| array_index(key).map(|index| (index, value)))
+        .collect::<Vec<_>>();
+    indexed.sort_unstable_by_key(|(index, _)| *index);
+    let mut values = indexed
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    values.extend(
+        object
+            .iter()
+            .filter(|(key, _)| array_index(key).is_none())
+            .map(|(_, value)| value),
+    );
+    values
+}
+
+fn array_index(key: &str) -> Option<u32> {
+    let value = key.parse::<u32>().ok()?;
+    (value != u32::MAX && value.to_string() == key).then_some(value)
 }
 
 fn normalize_renderer(value: &Value, ordinal: usize) -> Option<SearchResult> {

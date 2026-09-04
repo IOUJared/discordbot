@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -66,8 +66,7 @@ impl CounterDelta {
 }
 
 /// Payload-free private correlation event for extractor operations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObservationEvent {
     schema: &'static str,
     correlation_id: Uuid,
@@ -75,6 +74,22 @@ pub struct ObservationEvent {
     outcome: Outcome,
     duration_ms: DurationMillis,
     counter_delta: CounterDelta,
+}
+
+impl Serialize for ObservationEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut fields = serializer.serialize_map(Some(6))?;
+        fields.serialize_entry("correlationId", &self.correlation_id)?;
+        fields.serialize_entry("counterDelta", &self.counter_delta)?;
+        fields.serialize_entry("durationMs", &self.duration_ms)?;
+        fields.serialize_entry("outcome", &self.outcome)?;
+        fields.serialize_entry("schema", &self.schema)?;
+        fields.serialize_entry("stage", &self.stage)?;
+        fields.end()
+    }
 }
 
 impl ObservationEvent {
