@@ -95,22 +95,42 @@ if test "$VERIFY_MODE" = smoke; then
   test "$(docker exec "$probe" cat /tmp/proxy-count | tr -d '\r')" = 0
 fi
 if test "$VERIFY_MODE" = drain; then
-  stage=saturated-drain
+  stage=saturation-observation
+  docker exec -d "$sidecar" sh -ceu '
+rm -f /tmp/qa-deno-observed
+for attempt in $(seq 1 20000); do
+  count=0; deno_child=false
+  for p in /proc/[0-9]*; do
+    test -r "$p/comm" || continue
+    comm="$(cat "$p/comm")"
+    case "$comm" in
+      yt-dlp*) count=$((count+1));;
+      deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) deno_child=true;; esac;;
+    esac
+  done
+  test "$count" -eq 4 && $deno_child && { : >/tmp/qa-deno-observed; exit 0; }
+  sleep 0.001
+done
+exit 1'
   docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
-  observed=false; deno_observed=false; : >"$work/children"
+  observed=false; : >"$work/children"
   for attempt in $(seq 1 100); do
-    state="$(docker exec "$sidecar" sh -ceu 'count=0; deno=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; deno) deno=1;; esac; done; printf "%s:%s" "$count" "$deno"')"
+    count="$(docker exec "$sidecar" sh -ceu 'count=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; esac; done; printf "%s" "$count"')"
     docker exec "$sidecar" cat /tmp/qa-pids >"$work/children"
-    test "${state%%:*}" -eq 4 && observed=true; test "${state##*:}" -eq 1 && deno_observed=true
-    $observed && $deno_observed && break
+    test "$count" -eq 4 && observed=true
+    $observed && docker exec "$sidecar" test -f /tmp/qa-deno-observed && break
     sleep 0.1
   done
-  $observed; $deno_observed
+  $observed
+  docker exec "$sidecar" test -f /tmp/qa-deno-observed
+  stage=host-process-snapshot
   docker top "$sidecar" -eo pid,stat,comm | awk 'NR > 1 { if ($2 ~ /^Z/) exit 1; print $1 }' >"$work/host-pids"
   while read -r pid; do test -r "/proc/$pid/stat"; printf '%s:%s\n' "$pid" "$(awk '{print $22}' "/proc/$pid/stat")"; done <"$work/host-pids" >"$work/host-processes"
+  stage=sigterm-deadline
   started="$(date +%s%3N)"; docker kill --signal=TERM "$sidecar" >"$raw" 2>&1
   while test "$(docker inspect -f '{{.State.Running}}' "$sidecar")" = true; do test $(( $(date +%s%3N) - started )) -lt 10000; sleep 0.1; done
   test $(( $(date +%s%3N) - started )) -lt 10000
+  stage=host-process-reap
   while IFS=: read -r pid start; do test ! -r "/proc/$pid/stat" || test "$(awk '{print $22}' "/proc/$pid/stat")" != "$start"; done <"$work/host-processes"
 fi
 test "$VERIFY_MODE" = smoke && challenge=true || challenge=not-run
