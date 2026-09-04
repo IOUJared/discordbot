@@ -19,6 +19,7 @@ export function withFixture(callback) {
   const runId = `7-${"a".repeat(32)}`
   const historicalRunId = `6-${"c".repeat(32)}`
   const selectedSha = "b".repeat(40)
+  const historicalSha = "3".repeat(40)
   const run = join(backup, runId)
   const historicalRun = join(backup, historicalRunId)
   const ownerPath = join(fixture, "owner.sh")
@@ -147,16 +148,55 @@ exit 1
       JSON.stringify({
         schema: "discord-music-deploy-lease.v1",
         runId: historicalRunId,
+        generation: 6,
+        selectedSha: historicalSha,
+        kind: "deployment",
+        configPath: "/opt/discord-music/deploy/compose.yaml",
+        workingDir: "/opt/discord-music/deploy",
         eventCursor: "2026-09-04T00:00:00Z",
+        composeHash: "4".repeat(64),
+        envHash: "5".repeat(64),
+        ownerHash: "6".repeat(64),
+        desiredFingerprint: "7".repeat(64),
+        priorState: {
+          configHash: "4".repeat(64),
+          envHash: "5".repeat(64),
+          git: "8".repeat(40),
+          mode: "rust",
+          serverImage: `sha256:${"1".repeat(64)}`,
+          sidecarImage: `sha256:${"2".repeat(64)}`,
+          serverRef: "discord-music-server:prior",
+          sidecarRef: "discord-music-media-sidecar:prior",
+          sidecarPresent: true,
+          publicHealth: {},
+          volumes: [],
+        },
+        priorPublicHealth: {},
+        rollbackTags: {
+          server: `discord-music-rollback:${historicalRunId}-server`,
+          sidecar: `discord-music-rollback:${historicalRunId}-sidecar`,
+        },
       }),
     )
     writeFileSync(
       join(historicalRun, "terminal.json"),
       JSON.stringify({
+        schema: "discord-music-deploy-lease.v1",
         runId: historicalRunId,
+        generation: 6,
+        selectedSha: historicalSha,
+        sequence,
+        deadlineClock: "CLOCK_BOOTTIME",
+        deadlineBoottime: 999999,
+        eventCursor: "2026-09-04T00:00:00Z",
         state: "expired",
         restoreState: "restored",
+        stableSamples: 2,
+        lateDaemonDetected: false,
+        reconcilePasses: 0,
+        eventProof: null,
         acceptedOperations,
+        activeMutation: null,
       }),
     )
     writeFileSync(

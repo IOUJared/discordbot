@@ -28,7 +28,7 @@ function insertBeforeEnd(path, members) {
   writeFileSync(path, `${source.slice(0, -1)},${members}}`)
 }
 
-function assertRejectedWithoutMutation(fixture, mutate, label) {
+export function assertRejectedWithoutMutation(fixture, mutate, label) {
   const {
     dockerLog,
     historicalRun,

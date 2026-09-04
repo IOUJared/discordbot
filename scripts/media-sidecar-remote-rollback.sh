@@ -586,13 +586,67 @@ task_event_floor() {
   done | sort | head -1
 }
 validate_cleanup_json_records() {
-  local candidate run_id manifest terminal
+  local current_run_id="$1" candidate run_id manifest terminal selected_sha generation event_cursor
   for candidate in "$MS_BACKUP"/*; do
     test -d "$candidate" || continue; run_id="${candidate##*/}"
     [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
+    test "$run_id" != "$current_run_id" || continue
     manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
     test ! -r "$manifest" || strict_json_file "$manifest" || return 1
     test ! -r "$terminal" || strict_json_file "$terminal" || return 1
+    test ! -r "$manifest" || jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '
+      type=="object" and .schema==$schema and .runId==$runId and
+      (.generation|type=="number" and .>0 and floor==.) and
+      (.selectedSha|type=="string" and test("^[0-9a-f]{40}$")) and
+      (.kind|type=="string" and length>0) and
+      (.configPath|type=="string" and startswith("/")) and
+      (.workingDir|type=="string" and startswith("/")) and
+      (.eventCursor|type=="string" and length>0) and
+      ([.composeHash,.envHash,.ownerHash,.desiredFingerprint]|all(type=="string" and test("^[0-9a-f]{64}$"))) and
+      (.priorState|type=="object") and
+      (.priorState.configHash|type=="string" and test("^[0-9a-f]{64}$")) and
+      (.priorState.envHash|type=="string" and test("^[0-9a-f]{64}$")) and
+      (.priorState.git|type=="string" and test("^[0-9a-f]{40}$")) and
+      (.priorState.mode|type=="string" and IN("disabled","shadow","rust")) and
+      (.priorState.serverImage|type=="string" and test("^sha256:[0-9a-f]{64}$")) and
+      (.priorState.sidecarPresent|type=="boolean") and
+      (.priorState.sidecarImage|type=="string") and
+      (if .priorState.sidecarPresent then (.priorState.sidecarImage|test("^sha256:[0-9a-f]{64}$")) else .priorState.sidecarImage=="" end) and
+      (.priorState.serverRef|type=="string" and length>0) and
+      (.priorState.sidecarRef|type=="string") and
+      (.priorState.publicHealth|type=="object") and (.priorState.volumes|type=="array") and
+      (.priorPublicHealth|type=="object") and (.rollbackTags|type=="object") and
+      .rollbackTags.server==("discord-music-rollback:"+$runId+"-server") and
+      (if .priorState.sidecarPresent then .rollbackTags.sidecar==("discord-music-rollback:"+$runId+"-sidecar") else .rollbackTags.sidecar==null end)
+    ' "$manifest" >/dev/null || return 1
+    test ! -r "$terminal" || test -r "$manifest" || return 1
+    test ! -r "$terminal" || {
+      selected_sha="$(jq -er .selectedSha "$manifest")" || return 1
+      generation="$(jq -er .generation "$manifest")" || return 1
+      event_cursor="$(jq -er .eventCursor "$manifest")" || return 1
+      jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" --arg cursor "$event_cursor" --argjson generation "$generation" '
+        .sequence as $terminalSequence |
+        type=="object" and .schema==$schema and .runId==$runId and .selectedSha==$sha and
+        .generation==$generation and .eventCursor==$cursor and
+        (.sequence|type=="number" and .>=0 and floor==.) and
+        .deadlineClock=="CLOCK_BOOTTIME" and (.deadlineBoottime|type=="number" and .>=0 and floor==.) and
+        ((.state=="committed" and .restoreState=="idle") or (.state=="expired" and .restoreState=="restored")) and
+        (.stableSamples|type=="number" and .>=0 and floor==.) and
+        (.lateDaemonDetected|type=="boolean") and (.reconcilePasses|type=="number" and .>=0 and floor==.) and
+        (.eventProof==null or (.eventProof|type=="object")) and .activeMutation==null and
+        (.acceptedOperations|type=="array") and
+        (([.acceptedOperations[].sequence]|length)==([.acceptedOperations[].sequence]|unique|length)) and
+        (([.acceptedOperations[].sequence])==([.acceptedOperations[].sequence]|sort)) and
+        (.acceptedOperations|all(
+          type=="object" and
+          (.sequence|type=="number" and .>0 and floor==.) and .sequence<=$terminalSequence and
+          (.operation|type=="string" and IN("tag-prior","receive-bundle","checkout","build","build-server","build-sidecar","configure-shadow","configure-rust","configure-disabled","up","stop-sidecar","start-sidecar","benchmark-live","benchmark-fallback","benchmark-disabled","benchmark-fresh","drill-accept")) and
+          (.status|type=="string" and IN("succeeded","failed","superseded"))
+        ))
+      ' "$terminal" >/dev/null
+    } || return 1
+    event_cursor="$(jq -er .eventCursor "$manifest")" || return 1
+    date -d "$event_cursor" +%s >/dev/null 2>&1 || return 1
   done
 }
 cleanup_failed_images() {
@@ -607,7 +661,7 @@ cleanup_failed_images() {
   test -r "$manifest" || die cleanup-manifest-missing
   strict_json_file "$manifest" || die cleanup-manifest-json-invalid
   strict_json_file "$MS_LEASE" || die cleanup-lease-json-invalid
-  validate_cleanup_json_records || die cleanup-task-json-invalid
+  validate_cleanup_json_records "$run_id" || die cleanup-task-json-invalid
   jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" \
     '.schema==$schema and .runId==$runId and .selectedSha==$sha and (.priorState.serverImage|test("^sha256:[0-9a-f]{64}$")) and ((.priorState.sidecarImage // "")|test("^(|sha256:[0-9a-f]{64})$"))' "$manifest" >/dev/null || die cleanup-manifest-binding
   jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" \
