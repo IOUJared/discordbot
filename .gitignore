@@ -4,6 +4,7 @@ coverage/
 .svelte-kit/
 build/
 test-results/
+apps/media-sidecar/target/
 *.tsbuildinfo
 .env
 .env.*
