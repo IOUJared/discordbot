@@ -3,7 +3,8 @@
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 
-import { hashFile, writeArtifact } from "./media-sidecar-artifact.mjs"
+import { writeArtifact } from "./media-sidecar-artifact.mjs"
+import { audit } from "./media-sidecar-audit.mjs"
 import {
   INTEGRATION_COMMAND,
   parseOptions,
@@ -216,27 +217,12 @@ function deploy({ client, values, sha, kind }) {
   }
 }
 
-function audit(command, values) {
-  const sha = required(values, command === "audit-scope" ? "sha" : "bind-sha", /^[0-9a-f]{40}$/u)
-  assertValue(sha === currentSha(), "audit-sha")
-  const statePath = required(values, "post-f3-evidence")
-  const state = JSON.parse(readFileSync(statePath, "utf8"))
-  assertValue(
-    state.sha === sha && state.mode === "rust" && state.internalState === "ready",
-    "audit-state",
-  )
-  const report = `# ${command}\n\nAPPROVE\n\n- Commit: ${sha}\n- F3 state SHA-256: ${hashFile(statePath)}\n- Production: sidecar healthy; Node rust/ready; private three-route boundary retained.\n`
-  const output = required(values, "output")
-  const hash = writeArtifact(output, report)
-  return { ok: true, command, sha, reportHash: hash }
-}
-
 const command = process.argv[2]
 try {
   assertValue(command !== undefined && INTEGRATION_COMMAND.test(command), "command")
   const values = parseOptions(process.argv.slice(3))
   if (command.startsWith("audit") || command === "attest-code-quality") {
-    process.stdout.write(`${JSON.stringify(audit(command, values))}\n`)
+    process.stdout.write(`${JSON.stringify(audit(command, values, currentSha()))}\n`)
   } else {
     requireProtocol(values)
     const client = new RemoteClient(values)
