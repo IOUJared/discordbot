@@ -426,7 +426,7 @@ task_build_image_ids() {
   done | sort -u
 }
 cleanup_failed_images() {
-  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar
+  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar pass_removed
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
@@ -449,13 +449,17 @@ cleanup_failed_images() {
       docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1))
     done < <(sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p' | awk '!seen[$0]++')
   done
-  while read -r id; do
-    id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
-    test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
-    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
-    tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
-    docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1))
-  done < <(task_build_image_ids)
+  for _ in $(seq 1 32); do
+    pass_removed=0
+    while read -r id; do
+      id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
+      test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
+      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
+      docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1)); pass_removed=$((pass_removed+1))
+    done < <(task_build_image_ids)
+    test "$pass_removed" -gt 0 || break
+  done
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
   jq --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
   jq -cn --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
