@@ -410,6 +410,21 @@ recover_restoring() {
   restore_locked "$run_id" || die restore-pending
   jq -cn --arg runId "$run_id" '{ok:true,runId:$runId,state:"expired",restoreState:"restored",stableSamples:2,recoveryOwner:true}'
 }
+task_build_image_ids() {
+  local candidate run_id manifest terminal sequence log
+  for candidate in "$MS_BACKUP"/*; do
+    test -d "$candidate" || continue; run_id="${candidate##*/}"
+    [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
+    manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
+    test -r "$manifest" && test -r "$terminal" || continue
+    jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '.schema==$schema and .runId==$runId' "$manifest" >/dev/null || continue
+    jq -e --arg runId "$run_id" '.runId==$runId and (.state=="committed" or (.state=="expired" and .restoreState=="restored"))' "$terminal" >/dev/null || continue
+    while read -r sequence; do
+      log="$candidate/operations/$sequence.log"; test -r "$log" || continue
+      sed $'s/\033\[[0-9;]*m//g' "$log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p'
+    done < <(jq -r '.acceptedOperations[]|select(.operation=="build")|.sequence' "$terminal")
+  done | sort -u
+}
 cleanup_failed_images() {
   local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
@@ -434,6 +449,13 @@ cleanup_failed_images() {
       docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1))
     done < <(sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p' | awk '!seen[$0]++')
   done
+  while read -r id; do
+    id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
+    test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
+    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+    tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
+    docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1))
+  done < <(task_build_image_ids)
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
   jq --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
   jq -cn --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'

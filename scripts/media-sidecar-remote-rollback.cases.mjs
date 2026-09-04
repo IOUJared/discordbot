@@ -26,6 +26,7 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "cleanup-failed-images",
     "images-before-build",
     "remove_new_untagged_images",
+    "task_build_image_ids",
     "healthStatus",
     "searchStatus",
     "dnsCount",
