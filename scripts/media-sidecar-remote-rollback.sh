@@ -15,6 +15,7 @@ readonly MS_OWNER_B64="${MEDIA_OWNER_B64:-}"
 readonly MS_DEADLINE_SECONDS="${MEDIA_DEADLINE_SECONDS:-600}"
 readonly MS_SELF="${BASH_SOURCE[0]:-/dev/stdin}"
 readonly MS_RETENTION_DAYS="${MEDIA_RETENTION_DAYS:-7}"
+readonly MS_DANGLING_RETENTION_DAYS="${MEDIA_DANGLING_RETENTION_DAYS:-1}"
 
 die() { printf '{"ok":false,"stage":"%s"}\n' "$1" >&2; exit 1; }
 boottime() { awk '{printf "%d", $1}' /proc/uptime; }
@@ -539,16 +540,17 @@ cleanup_failed_images() {
   jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
 cleanup_terminal_space() {
-  local run_id="$1" selected_sha="$2" before after cutoff removed id created created_epoch tags
+  local run_id="$1" selected_sha="$2" before after cutoff removed id created created_epoch tags digests
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
   test "$(lease_value .state)" = committed || { test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state; }
-  before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; cutoff="$(date -d "$MS_RETENTION_DAYS days ago" +%s)"; removed=0
+  before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; cutoff="$(date -d "$MS_DANGLING_RETENTION_DAYS days ago" +%s)"; removed=0
   while read -r id; do
     test -n "$id" || continue
     docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
     tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
+    digests="$(docker image inspect -f '{{json .RepoDigests}}' "$id")"; test "$digests" = null || test "$digests" = '[]' || continue
     created="$(docker image inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -lt "$cutoff" || continue
     docker image rm "$id" >/dev/null; removed=$((removed+1))
   done < <(docker images -q --filter dangling=true --no-trunc | sort -u)
