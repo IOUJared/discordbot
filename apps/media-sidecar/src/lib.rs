@@ -28,6 +28,8 @@ pub mod resolve;
 pub mod routes;
 #[doc(hidden)]
 pub mod search;
+#[doc(hidden)]
+pub mod task_join;
 
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10);
 
