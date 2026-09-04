@@ -97,7 +97,7 @@ fi
 if test "$VERIFY_MODE" = drain; then
   stage=saturation-observation
   docker exec -d "$sidecar" sh -ceu '
-rm -f /tmp/qa-deno-observed
+rm -f /tmp/qa-deno-observed /tmp/qa-four-observed
 for attempt in $(seq 1 20000); do
   count=0; deno_child=false
   for p in /proc/[0-9]*; do
@@ -108,7 +108,9 @@ for attempt in $(seq 1 20000); do
       deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) deno_child=true;; esac;;
     esac
   done
-  test "$count" -eq 4 && $deno_child && { : >/tmp/qa-deno-observed; exit 0; }
+  test "$count" -eq 4 && : >/tmp/qa-four-observed
+  $deno_child && : >/tmp/qa-deno-observed
+  test -f /tmp/qa-four-observed && test -f /tmp/qa-deno-observed && exit 0
   sleep 0.001
 done
 exit 1'
@@ -122,6 +124,7 @@ exit 1'
     sleep 0.1
   done
   $observed
+  docker exec "$sidecar" test -f /tmp/qa-four-observed
   docker exec "$sidecar" test -f /tmp/qa-deno-observed
   stage=host-process-snapshot
   docker top "$sidecar" -eo pid,stat,comm | awk 'NR > 1 { if ($2 ~ /^Z/) exit 1; print $1 }' >"$work/host-pids"
