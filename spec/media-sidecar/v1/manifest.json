@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "raw": [
+    {
+      "path": "raw/innertube-ordinal-malformed-valid.json",
+      "sha256": "348502ff1ce7e729607ea9cea6d6cf239e8140961f5c635daac1f4036412329f",
+      "sourceKind": "innertube",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-sidecar-client.test.ts#round-trips-every-v1-manifest-case",
+      "rustConsumer": "planned: apps/media-sidecar/tests/search.rs#search_manifest_parity",
+      "expected": { "outcome": "response", "fixture": "fixtures/responses/search-ordinal.json" }
+    },
+    {
+      "path": "raw/ytdlp-resolve-valid.json",
+      "sha256": "5bc688fd03e54ea815571e5541c7c7ae61427c7cc999f2b6ae7dfc21bc49d797",
+      "sourceKind": "yt-dlp",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-sidecar-client.test.ts#round-trips-every-v1-manifest-case",
+      "rustConsumer": "planned: apps/media-sidecar/tests/resolve.rs#resolve_manifest_parity",
+      "expected": { "outcome": "response", "fixture": "fixtures/responses/resolve.json" }
+    },
+    {
+      "path": "raw/ytdlp-resolve-host-header.json",
+      "sha256": "df3ae1d08aec36cf30c4f0482c287df1f779190c431e5dbef95a580168b3e4ab",
+      "sourceKind": "yt-dlp",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-sidecar-client.test.ts#round-trips-every-v1-manifest-case",
+      "rustConsumer": "planned: apps/media-sidecar/tests/resolve.rs#resolve_manifest_parity",
+      "expected": { "outcome": "error", "code": "invalid_resolve_output" }
+    },
+    {
+      "path": "raw/ytdlp-resolve-manifest-protocol.json",
+      "sha256": "e1c7a7216e5c062eaa1cfd981e3ae3516379d1da265185a48ada10ebf0f78988",
+      "sourceKind": "yt-dlp",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-sidecar-client.test.ts#round-trips-every-v1-manifest-case",
+      "rustConsumer": "planned: apps/media-sidecar/tests/resolve.rs#resolve_manifest_parity",
+      "expected": { "outcome": "error", "code": "invalid_resolve_output" }
+    },
+    {
+      "path": "raw/ytdlp-resolve-malformed.json",
+      "sha256": "a9892c4b1b2a3928996b6abf01dc7d21d637e259afe4eae3935c6d5ed48f9ac5",
+      "sourceKind": "yt-dlp",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-sidecar-client.test.ts#round-trips-every-v1-manifest-case",
+      "rustConsumer": "planned: apps/media-sidecar/tests/resolve.rs#resolve_manifest_parity",
+      "expected": { "outcome": "error", "code": "invalid_resolve_output" }
+    },
+    {
+      "path": "raw/ytdlp-resolve-invalid-json.txt",
+      "sha256": "5715ea11351f96c1faee52d83ceb8edf41612427a452f7acc780b6bc05072500",
+      "sourceKind": "yt-dlp",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-sidecar-client.test.ts#round-trips-every-v1-manifest-case",
+      "rustConsumer": "planned: apps/media-sidecar/tests/resolve.rs#resolve_manifest_parity",
+      "expected": { "outcome": "error", "code": "invalid_resolve_output" }
+    }
+  ],
+  "parserMigration": [
+    { "sourceTest": "parses a search fixture into shared tracks", "classification": "implementation-only", "rationale": "Obsolete yt-dlp flat-search normalization is replaced by Innertube search." },
+    { "sourceTest": "Given selected audio formats When search metadata is parsed Then higher bitrates rank first", "classification": "implementation-only", "rationale": "Obsolete yt-dlp abr ranking is replaced by fixed raw-ordinal scoring." },
+    { "sourceTest": "rejects malformed external JSON", "classification": "implementation-only", "rationale": "Obsolete parser shape rejection is replaced by strict sidecar protocol validation." },
+    { "sourceTest": "derives YouTube artwork when flat search omits a thumbnail", "classification": "implementation-only", "rationale": "Obsolete yt-dlp thumbnail fallback is replaced by required Innertube renderer artwork." },
+    { "sourceTest": "ranks a verified official artist upload above an unofficial copy", "classification": "implementation-only", "rationale": "Obsolete heuristic ranking is replaced by raw ordinal ordering." },
+    { "sourceTest": "collapses duplicate audio video and lyric uploads of the same song", "classification": "implementation-only", "rationale": "Obsolete heuristic deduplication is replaced by bounded renderer extraction." },
+    { "sourceTest": "keeps meaningful alternate versions as separate choices", "classification": "implementation-only", "rationale": "Obsolete yt-dlp alternate-version heuristic is replaced by raw renderer results." }
+  ]
+}

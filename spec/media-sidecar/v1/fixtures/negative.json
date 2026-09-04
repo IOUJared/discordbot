@@ -1,0 +1,8 @@
+[
+  {"name":"id-url-mismatch","contentType":"application/json","body":{"version":1,"track":{"id":"one","url":"https://www.youtube.com/watch?v=two"}},"expectedStatus":400,"expectedCode":"invalid_request"},
+  {"name":"unknown-request-field","contentType":"application/json","body":{"version":1,"query":"x","debug":true},"expectedStatus":400,"expectedCode":"invalid_request"},
+  {"name":"request-over-16-kib","contentType":"application/json","bodyBytes":16385,"expectedStatus":413,"expectedCode":"payload_too_large"},
+  {"name":"non-json-content-type","contentType":"text/plain","body":"version=1","expectedStatus":415,"expectedCode":"unsupported_media_type"},
+  {"name":"unknown-response-field","contentType":"application/json","response":{"version":1,"results":[],"debug":true},"expectedProtocolError":"SidecarProtocolError"},
+  {"name":"unsafe-media-header","contentType":"application/json","response":{"version":1,"media":{"kind":"remote","url":"https://rr1---fixture.googlevideo.com/videoplayback?id=abc","headers":{"Host":"127.0.0.1"},"container":"webm","codec":"opus","bitrateKbps":252,"seekable":true}},"expectedProtocolError":"SidecarProtocolError"}
+]

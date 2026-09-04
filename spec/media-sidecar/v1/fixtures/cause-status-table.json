@@ -1,0 +1,19 @@
+[
+  {"cause":"valid strict response","rust":"200/no error","node":"domain result","fallback":"no","state":"ready"},
+  {"cause":"invalid request or id/url mismatch","rust":"400/invalid_request","node":"SidecarInvalidRequestError","fallback":"no","state":"degraded"},
+  {"cause":"body above 16 KiB","rust":"413/payload_too_large","node":"SidecarRequestRejectedError","fallback":"no","state":"degraded"},
+  {"cause":"non-JSON content type","rust":"415/unsupported_media_type","node":"SidecarRequestRejectedError","fallback":"no","state":"degraded"},
+  {"cause":"no extractor permit","rust":"429/busy","node":"SidecarOverloadedError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"Innertube or yt-dlp valid failure","rust":"502/extractor_failed","node":"SidecarExtractorError","fallback":"no","state":"degraded"},
+  {"cause":"Innertube redirect","rust":"502/extractor_failed","node":"SidecarExtractorError","fallback":"no","state":"degraded"},
+  {"cause":"Rust deadline","rust":"504/deadline_exceeded","node":"SidecarDeadlineError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"Node deadline","rust":"transport aborted","node":"SidecarClientDeadlineError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"sanitized Rust internal failure","rust":"500/internal","node":"SidecarInternalError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"refused reset or DNS transport","rust":"no trusted Rust response","node":"SidecarUnavailableError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"malformed version-skew unsafe or oversized response","rust":"no trusted Rust response","node":"SidecarProtocolError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"sidecar redirect response","rust":"redirect rejected","node":"SidecarProtocolError","fallback":"yes_once_rust","state":"degraded"},
+  {"cause":"caller request abort","rust":"no required Rust response","node":"AbortError","fallback":"unchanged","state":"unchanged"},
+  {"cause":"shadow comparison mismatch","rust":"200","node":"local result plus sanitized mismatch event","fallback":"local_authoritative","state":"degraded"},
+  {"cause":"shadow capacity 32 reached","rust":"no Rust call","node":"local result plus shadow skipped event","fallback":"local_authoritative","state":"degraded"},
+  {"cause":"any later valid sidecar success","rust":"200/no error","node":"domain result or comparison","fallback":"no","state":"ready"}
+]
