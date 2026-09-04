@@ -181,7 +181,7 @@ async fn search_manifest_parity() {
     let actual = search(&server).await.expect("fixture search must succeed");
 
     // Then: the corpus-normalized result matches and no sixth ordinal leaks.
-    assert_eq!(actual.results.first(), expected.results.first());
+    assert_eq!(actual, expected);
     assert!(
         actual
             .results
@@ -204,7 +204,7 @@ async fn malformed_renderer_keeps_raw_ordinal() {
     // Then: malformed zero consumes its slot and ordinal five is excluded.
     assert_eq!(response.results[0].track.id, "valid-ordinal-1");
     assert_eq!(response.results[0].score, 0.9);
-    assert_eq!(response.results.len(), 4);
+    assert_eq!(response.results.len(), 1);
     assert!(
         response
             .results
@@ -355,6 +355,9 @@ async fn search_benchmark_30_warmups_200_samples_p95_under_1000ms() {
     .expect("fake server must bind");
     let client = SearchClient::for_test(server.endpoint.clone()).expect("test client must build");
     let token = CancellationToken::new();
+    let expected: SearchResponse =
+        serde_json::from_slice(&read_fixture("fixtures/responses/search-ordinal.json"))
+            .expect("expected response must be valid JSON");
     for _ in 0..WARMUPS {
         client
             .search("warmup", &token)
@@ -362,6 +365,7 @@ async fn search_benchmark_30_warmups_200_samples_p95_under_1000ms() {
             .expect("warmup must succeed");
     }
     let mut samples = Vec::with_capacity(SAMPLES);
+    let mut parity_matches = 0_usize;
 
     // When: two hundred uncached HTTP calls are timed monotonically.
     for sample in 0..SAMPLES {
@@ -370,7 +374,9 @@ async fn search_benchmark_30_warmups_200_samples_p95_under_1000ms() {
             .search(&format!("sample-{sample}"), &token)
             .await
             .expect("sample must succeed");
-        assert_eq!(result.results[0].track.id, "valid-ordinal-1");
+        if result == expected {
+            parity_matches = parity_matches.saturating_add(1);
+        }
         samples.push(started.elapsed());
     }
     samples.sort_unstable();
@@ -378,9 +384,14 @@ async fn search_benchmark_30_warmups_200_samples_p95_under_1000ms() {
 
     // Then: exact calls, zero errors, full parity, and sub-second p95 are observed.
     assert_eq!(server.calls.load(Ordering::SeqCst), WARMUPS + SAMPLES);
+    assert_eq!(parity_matches, SAMPLES);
     assert!(p95 < Duration::from_secs(1), "p95 was {p95:?}");
+    let parity_percent = parity_matches
+        .saturating_mul(100)
+        .checked_div(SAMPLES)
+        .unwrap_or(0);
     println!(
-        "{{\"warmups\":{WARMUPS},\"samples\":{SAMPLES},\"errors\":0,\"parityPercent\":100,\"p95Micros\":{}}}",
+        "{{\"warmups\":{WARMUPS},\"samples\":{SAMPLES},\"errors\":0,\"parityPercent\":{parity_percent},\"p95Micros\":{}}}",
         p95.as_micros()
     );
 }

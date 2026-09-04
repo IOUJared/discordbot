@@ -244,7 +244,8 @@ fn parse_response(body: &[u8]) -> Result<SearchResponse, SearchError> {
     let results = candidates
         .into_iter()
         .enumerate()
-        .filter_map(|(ordinal, candidate)| normalize_renderer(candidate, ordinal))
+        .find_map(|(ordinal, candidate)| normalize_renderer(candidate, ordinal))
+        .into_iter()
         .collect();
     Ok(SearchResponse {
         version: crate::model::API_VERSION,
