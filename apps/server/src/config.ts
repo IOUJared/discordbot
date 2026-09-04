@@ -19,9 +19,16 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(0).max(65_535).default(3000),
   VOICE_IDLE_TIMEOUT: z.coerce.number().int().min(1).max(86_400).default(300),
   YOUTUBE_COOKIES_PATH: z.string().min(1).optional(),
+  MEDIA_SIDECAR_MODE: z.enum(["disabled", "shadow", "rust"]).default("disabled"),
+  MEDIA_SIDECAR_URL: httpUrl.optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   DISCORD_API_URL: httpUrl.default("https://discord.com/api/v10"),
 })
+
+export type MediaSidecarConfig =
+  | { readonly mode: "disabled" }
+  | { readonly mode: "shadow"; readonly url: string }
+  | { readonly mode: "rust"; readonly url: string }
 
 export type ServerConfig = {
   readonly discordToken: string
@@ -42,7 +49,27 @@ export type ServerConfig = {
   readonly discordApiUrl: string
 }
 
-export function parseConfig(input: Readonly<Record<string, string | undefined>>): ServerConfig {
+export type ParsedServerConfig = ServerConfig & {
+  readonly mediaSidecar: MediaSidecarConfig
+}
+
+function parseMediaSidecarConfig(
+  mode: "disabled" | "shadow" | "rust",
+  url: string | undefined,
+): MediaSidecarConfig {
+  switch (mode) {
+    case "disabled":
+      return { mode }
+    case "shadow":
+      return { mode, url: httpUrl.parse(url) }
+    case "rust":
+      return { mode, url: httpUrl.parse(url) }
+  }
+}
+
+export function parseConfig(
+  input: Readonly<Record<string, string | undefined>>,
+): ParsedServerConfig {
   const parsed = envSchema.parse(input)
   const authorizedUserIds = new Set([
     parsed.DISCORD_OWNER_ID,
@@ -68,6 +95,7 @@ export function parseConfig(input: Readonly<Record<string, string | undefined>>)
     ...(parsed.YOUTUBE_COOKIES_PATH === undefined
       ? {}
       : { youtubeCookiesPath: parsed.YOUTUBE_COOKIES_PATH }),
+    mediaSidecar: parseMediaSidecarConfig(parsed.MEDIA_SIDECAR_MODE, parsed.MEDIA_SIDECAR_URL),
     logLevel: parsed.LOG_LEVEL,
     discordApiUrl: parsed.DISCORD_API_URL.replace(/\/$/, ""),
   }

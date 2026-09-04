@@ -57,6 +57,43 @@ describe("server configuration", () => {
     expect(config.youtubeCookiesPath).toBe("/run/secrets/youtube.cookies.txt")
   })
 
+  it("Given no sidecar variables When parsed Then media extraction is disabled without a URL", () => {
+    // Given / When
+    const config = parseConfig(valid)
+
+    // Then
+    expect(config.mediaSidecar).toEqual({ mode: "disabled" })
+  })
+
+  it.each(["shadow", "rust"])(
+    "Given %s sidecar mode and a safe URL When parsed Then the active mode is typed",
+    (mode) => {
+      // Given / When
+      const config = parseConfig({
+        ...valid,
+        MEDIA_SIDECAR_MODE: mode,
+        MEDIA_SIDECAR_URL: "http://127.0.0.1:3100",
+      })
+
+      // Then
+      expect(config.mediaSidecar).toEqual({ mode, url: "http://127.0.0.1:3100" })
+    },
+  )
+
+  it.each([
+    { MEDIA_SIDECAR_MODE: "shadow" },
+    { MEDIA_SIDECAR_MODE: "rust" },
+    { MEDIA_SIDECAR_MODE: "shadow", MEDIA_SIDECAR_URL: "file:///run/media-sidecar.sock" },
+    { MEDIA_SIDECAR_MODE: "rust", MEDIA_SIDECAR_URL: "javascript:alert(1)" },
+    { MEDIA_SIDECAR_MODE: "invalid", MEDIA_SIDECAR_URL: "http://127.0.0.1:3100" },
+  ])(
+    "rejects invalid media sidecar configuration: $MEDIA_SIDECAR_MODE $MEDIA_SIDECAR_URL",
+    (sidecar) => {
+      // Given / When / Then
+      expect(() => parseConfig({ ...valid, ...sidecar })).toThrow()
+    },
+  )
+
   it.each(["0", "1.5", "86401", "not-a-number"])(
     "Given invalid voice idle timeout %s When parsed Then configuration is rejected",
     (voiceIdleTimeout) => {

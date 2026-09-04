@@ -1,4 +1,4 @@
-import { TrackSchema } from "@discord-music/contracts"
+import { type SearchResult, TrackSchema } from "@discord-music/contracts"
 import { describe, expect, it } from "vitest"
 import {
   createRemoteMediaPolicy,
@@ -9,7 +9,6 @@ import type { ProcessExecutor } from "../../src/media/types.js"
 import {
   parsePlaylistOutput,
   parseResolvedOutput,
-  parseSearchOutput,
   YouTubeMusicSource,
   youtubePlaylistArgs,
 } from "../../src/media/youtube.js"
@@ -27,6 +26,22 @@ const fixture = JSON.stringify({
     },
   ],
 })
+
+const searchResults = [
+  {
+    track: TrackSchema.parse({
+      id: "video-1",
+      provider: "youtube",
+      title: "Song",
+      artist: "Artist",
+      url: "https://www.youtube.com/watch?v=video-1",
+      durationMs: 42_000,
+      artworkUrl: "https://img.youtube.com/video-1.jpg",
+    }),
+    score: 1,
+    bitrateKbps: null,
+  },
+] satisfies readonly SearchResult[]
 
 describe("YouTube yt-dlp boundary", () => {
   it("Given a radio genre When playlist discovery arguments are built Then YouTube playlist results are requested safely", () => {
@@ -208,164 +223,6 @@ describe("YouTube yt-dlp boundary", () => {
     expect(executions).toBe(1)
   })
 
-  it("parses a search fixture into shared tracks", () => {
-    // Given
-    const output = fixture
-
-    // When
-    const results = parseSearchOutput(output)
-
-    // Then
-    expect(results.at(0)).toMatchObject({
-      track: { id: "video-1", durationMs: 42_000 },
-      bitrateKbps: null,
-    })
-  })
-
-  it("Given selected audio formats When search metadata is parsed Then higher bitrates rank first", () => {
-    // Given
-    const output = JSON.stringify({
-      entries: [
-        { id: "standard", title: "Song Standard", uploader: "Artist", duration: 180, abr: 128 },
-        { id: "premium", title: "Song Premium", uploader: "Artist", duration: 180, abr: 251.7 },
-        { id: "unknown", title: "Song Unknown", uploader: "Artist", duration: 180 },
-      ],
-    })
-
-    // When
-    const results = parseSearchOutput(output)
-
-    // Then
-    expect(results.map(({ track, bitrateKbps }) => [track.id, bitrateKbps])).toEqual([
-      ["premium", 252],
-      ["standard", 128],
-      ["unknown", null],
-    ])
-  })
-
-  it("rejects malformed external JSON", () => {
-    // Given
-    const output = JSON.stringify({ entries: [{ id: 7 }] })
-
-    // When
-    const parse = () => parseSearchOutput(output)
-
-    // Then
-    expect(parse).toThrow()
-  })
-
-  it("derives YouTube artwork when flat search omits a thumbnail", () => {
-    // Given
-    const output = JSON.stringify({
-      entries: [
-        {
-          id: "video-2",
-          title: "Another Song",
-          uploader: "Another Artist",
-          duration: 120,
-        },
-      ],
-    })
-
-    // When
-    const results = parseSearchOutput(output)
-
-    // Then
-    expect(results.at(0)?.track.artworkUrl).toBe("https://i.ytimg.com/vi/video-2/hqdefault.jpg")
-    expect(results.at(0)?.track.url).toBe("https://www.youtube.com/watch?v=video-2")
-  })
-
-  it("ranks a verified official artist upload above an unofficial copy", () => {
-    // Given
-    const output = JSON.stringify({
-      entries: [
-        {
-          id: "fan-copy",
-          title: "Northern Lines (Official Video)",
-          uploader: "Music Reuploads",
-          channel_is_verified: false,
-          duration: 240,
-        },
-        {
-          id: "artist-upload",
-          title: "Northern Lines (Official Music Video)",
-          uploader: "Small Hours",
-          channel_is_verified: true,
-          duration: 240,
-        },
-      ],
-    })
-
-    // When
-    const results = parseSearchOutput(output)
-
-    // Then
-    expect(results.map((result) => result.track.id)).toEqual(["artist-upload"])
-  })
-
-  it("collapses duplicate audio video and lyric uploads of the same song", () => {
-    // Given
-    const output = JSON.stringify({
-      entries: [
-        {
-          id: "official-video",
-          title: "Small Hours - Northern Lines (Official Video) feat. North Wind",
-          uploader: "Small Hours",
-          channel_is_verified: true,
-          duration: 240,
-        },
-        {
-          id: "official-audio",
-          title: "Small Hours - Northern Lines (Official Audio) ft. North Wind",
-          uploader: "Small Hours",
-          channel_is_verified: true,
-          duration: 240,
-        },
-        {
-          id: "lyrics",
-          title: "Small Hours - Northern Lines Lyrics",
-          uploader: "Lyrics Channel",
-          channel_is_verified: true,
-          duration: 240,
-        },
-      ],
-    })
-
-    // When
-    const results = parseSearchOutput(output)
-
-    // Then
-    expect(results.map((result) => result.track.id)).toEqual(["official-video"])
-  })
-
-  it("keeps meaningful alternate versions as separate choices", () => {
-    // Given
-    const output = JSON.stringify({
-      entries: [
-        {
-          id: "studio",
-          title: "Small Hours - Northern Lines (Official Video)",
-          uploader: "Small Hours",
-          channel_is_verified: true,
-          duration: 240,
-        },
-        {
-          id: "remix",
-          title: "Small Hours - Northern Lines (Midnight Remix)",
-          uploader: "Small Hours",
-          channel_is_verified: true,
-          duration: 260,
-        },
-      ],
-    })
-
-    // When
-    const results = parseSearchOutput(output)
-
-    // Then
-    expect(results.map((result) => result.track.id)).toEqual(["studio", "remix"])
-  })
-
   it("caches normalized repeat searches until the cache entry expires", async () => {
     // Given
     let now = 1_000
@@ -373,7 +230,7 @@ describe("YouTube yt-dlp boundary", () => {
     const searchClient = {
       async search() {
         executions += 1
-        return parseSearchOutput(fixture)
+        return searchResults
       },
     }
     const source = new YouTubeMusicSource(undefined, undefined, {
@@ -400,7 +257,7 @@ describe("YouTube yt-dlp boundary", () => {
         async search() {
           executions += 1
           await new Promise((resolve) => setImmediate(resolve))
-          return parseSearchOutput(fixture)
+          return searchResults
         },
       },
     })
@@ -452,7 +309,7 @@ describe("YouTube yt-dlp boundary", () => {
       preloadFirstSearchResult: true,
       searchClient: {
         async search() {
-          return parseSearchOutput(fixture)
+          return searchResults
         },
       },
     })
@@ -482,7 +339,7 @@ describe("YouTube yt-dlp boundary", () => {
       {
         searchClient: {
           async search() {
-            return parseSearchOutput(fixture)
+            return searchResults
           },
         },
       },
@@ -502,7 +359,7 @@ describe("YouTube yt-dlp boundary", () => {
     const searchClient = {
       async search() {
         executions += 1
-        return parseSearchOutput(fixture)
+        return searchResults
       },
     }
     const source = new YouTubeMusicSource(undefined, undefined, {
@@ -517,6 +374,53 @@ describe("YouTube yt-dlp boundary", () => {
 
     // Then
     expect(executions).toBe(3)
+  })
+
+  it("Given an injected extractor When a track resolves Then local process execution is bypassed", async () => {
+    // Given
+    let processExecutions = 0
+    const resolvedUrl = RemoteMediaUrlSchema.parse(
+      "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=injected",
+    )
+    const source = new YouTubeMusicSource(
+      {
+        async run() {
+          processExecutions += 1
+          throw new RangeError("Local resolver must not run")
+        },
+      },
+      undefined,
+      {
+        extractor: {
+          async resolve() {
+            return {
+              kind: "remote",
+              url: resolvedUrl,
+              headers: {},
+              container: "webm",
+              codec: "opus",
+              bitrateKbps: null,
+              seekable: true,
+            }
+          },
+        },
+      },
+    )
+    const track = TrackSchema.parse({
+      id: "injected",
+      provider: "youtube",
+      title: "Injected",
+      artist: "Extractor",
+      url: "https://www.youtube.com/watch?v=injected",
+      durationMs: 42_000,
+    })
+
+    // When
+    const media = await source.resolve(track)
+
+    // Then
+    expect(media.url).toBe(resolvedUrl)
+    expect(processExecutions).toBe(0)
   })
 
   it("parses playable URL headers and seek support", () => {

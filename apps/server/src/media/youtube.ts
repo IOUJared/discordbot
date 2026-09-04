@@ -1,18 +1,6 @@
-import {
-  BitrateKbpsSchema,
-  DurationMsSchema,
-  type SearchResult,
-  type Track,
-  TrackSchema,
-  type YouTubePlaylist,
-} from "@discord-music/contracts"
-import { z } from "zod"
+import type { SearchResult, Track, YouTubePlaylist } from "@discord-music/contracts"
 
-import {
-  type RemoteMediaPolicy,
-  RemoteMediaUrlSchema,
-  remoteMediaPolicy,
-} from "./media-url-policy.js"
+import { type RemoteMediaPolicy, remoteMediaPolicy } from "./media-url-policy.js"
 import { nodeProcessExecutor } from "./process-executor.js"
 import type {
   MusicSource,
@@ -20,8 +8,9 @@ import type {
   PlaylistSource,
   ProcessExecutor,
   RadioSource,
-  RemotePlayableMedia,
 } from "./types.js"
+import type { YouTubeExtractor } from "./youtube-extractor.js"
+import { LocalYouTubeResolver } from "./youtube-local-resolver.js"
 import {
   parsePlaylistOutput,
   parseYouTubePlaylistUrl,
@@ -37,56 +26,19 @@ import {
 } from "./youtube-radio.js"
 import { type YouTubeSearchClient, youtubeSearchClient } from "./youtube-search.js"
 
+export { parseResolvedOutput } from "./youtube-output.js"
 export { parsePlaylistOutput, youtubePlaylistArgs } from "./youtube-playlist.js"
 
-const searchEntrySchema = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1),
-  uploader: z.string().min(1),
-  channel_is_verified: z.boolean().nullable().optional(),
-  duration: z.number().nonnegative(),
-  thumbnail: z.url().nullable().optional(),
-  abr: z.number().positive().nullable().optional(),
-})
-const searchOutputSchema = z.object({ entries: z.array(searchEntrySchema) })
-const safeHttpHeadersSchema = z
-  .record(z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u), z.string().regex(/^[^\r\n]*$/u))
-  .refine((headers) =>
-    Object.keys(headers).every(
-      (name) =>
-        ![
-          "host",
-          "connection",
-          "content-length",
-          "proxy-authorization",
-          "transfer-encoding",
-        ].includes(name.toLocaleLowerCase()),
-    ),
-  )
-const resolvedOutputSchema = z.object({
-  url: RemoteMediaUrlSchema,
-  http_headers: safeHttpHeadersSchema.default({}),
-  ext: z.string().min(1),
-  acodec: z.string().min(1),
-  abr: z.number().positive().nullable().optional(),
-  protocol: z.enum(["http", "https"]),
-})
 const processTimeoutMs = 20_000
 const defaultSearchCacheTtlMs = 30_000
 const defaultSearchCacheCapacity = 100
-const maximumSearchResults = 5
-const duplicateQualifier =
-  /[([]\s*(?:official(?:\s+music)?\s+video|official\s+audio|lyrics?(?:\s+video)?|audio|visuali[sz]er)\s*[)\]]/giu
-const featuredArtists = /\b(?:ft|feat|featuring)\.?\s+.*$/giu
-const trailingDuplicateQualifier =
-  /\s+(?:official(?:\s+music)?\s+video|official\s+audio|lyrics?(?:\s+video)?|visuali[sz]er)\s*$/giu
-
 type YouTubeMusicSourceOptions = {
   readonly now?: () => number
   readonly searchCacheTtlMs?: number
   readonly searchCacheCapacity?: number
   readonly youtubeCookiesPath?: string
   readonly searchClient?: YouTubeSearchClient
+  readonly extractor?: YouTubeExtractor
   readonly preloadFirstSearchResult?: boolean
 }
 
@@ -107,85 +59,13 @@ type PendingResolution = {
   readonly outcome: Promise<PlayableMedia | undefined>
 }
 
-export function parseSearchOutput(output: string): readonly SearchResult[] {
-  const parsed = searchOutputSchema.parse(JSON.parse(output))
-  const ranked = parsed.entries
-    .map((entry, index) => ({
-      entry,
-      index,
-      official:
-        entry.channel_is_verified === true &&
-        (/\bofficial\b/iu.test(entry.title) || /(?:\s+-\s+topic|\bvevo)$/iu.test(entry.uploader)),
-    }))
-    .sort(
-      (left, right) => Number(right.official) - Number(left.official) || left.index - right.index,
-    )
-  const seenSongs = new Set<string>()
-
-  return ranked
-    .flatMap(({ entry }, index) => {
-      const words = entry.title
-        .normalize("NFKC")
-        .replace(duplicateQualifier, " ")
-        .replace(featuredArtists, " ")
-        .replace(trailingDuplicateQualifier, " ")
-        .toLocaleLowerCase("en-US")
-        .match(/[\p{L}\p{N}]+/gu)
-      const songKey = words?.join(" ") ?? entry.title.toLocaleLowerCase("en-US")
-      if (seenSongs.has(songKey)) {
-        return []
-      }
-      seenSongs.add(songKey)
-
-      return {
-        track: TrackSchema.parse({
-          id: entry.id,
-          provider: "youtube",
-          title: entry.title,
-          artist: entry.uploader,
-          url: `https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}`,
-          durationMs: DurationMsSchema.parse(Math.round(entry.duration * 1_000)),
-          artworkUrl:
-            entry.thumbnail ??
-            `https://i.ytimg.com/vi/${encodeURIComponent(entry.id)}/hqdefault.jpg`,
-        }),
-        score: Math.max(0, 1 - index * 0.1),
-        bitrateKbps:
-          entry.abr === null || entry.abr === undefined
-            ? null
-            : BitrateKbpsSchema.parse(Math.round(entry.abr)),
-      }
-    })
-    .sort(
-      (left, right) =>
-        (right.bitrateKbps ?? Number.NEGATIVE_INFINITY) -
-        (left.bitrateKbps ?? Number.NEGATIVE_INFINITY),
-    )
-    .slice(0, maximumSearchResults)
-}
-
-export function parseResolvedOutput(output: string): RemotePlayableMedia {
-  const parsed = resolvedOutputSchema.parse(JSON.parse(output))
-  return {
-    kind: "remote",
-    url: parsed.url,
-    headers: parsed.http_headers,
-    container: parsed.ext,
-    codec: parsed.acodec,
-    bitrateKbps:
-      parsed.abr === null || parsed.abr === undefined
-        ? null
-        : BitrateKbpsSchema.parse(Math.round(parsed.abr)),
-    seekable: true,
-  }
-}
-
 export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSource {
   private readonly now: () => number
   private readonly searchCacheTtlMs: number
   private readonly searchCacheCapacity: number
   private readonly youtubeCookiesPath: string | undefined
   private readonly searchClient: YouTubeSearchClient
+  private readonly extractor: YouTubeExtractor
   private readonly preloadFirstSearchResult: boolean
   private readonly searchCache = new Map<string, SearchCacheEntry>()
   private readonly pendingSearches = new Map<string, Promise<readonly SearchResult[]>>()
@@ -194,7 +74,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
 
   constructor(
     private readonly executor: ProcessExecutor = nodeProcessExecutor,
-    private readonly policy: RemoteMediaPolicy = remoteMediaPolicy,
+    policy: RemoteMediaPolicy = remoteMediaPolicy,
     options: YouTubeMusicSourceOptions = {},
   ) {
     this.now = options.now ?? Date.now
@@ -202,6 +82,8 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
     this.searchCacheCapacity = options.searchCacheCapacity ?? defaultSearchCacheCapacity
     this.youtubeCookiesPath = options.youtubeCookiesPath
     this.searchClient = options.searchClient ?? youtubeSearchClient
+    this.extractor =
+      options.extractor ?? new LocalYouTubeResolver(executor, policy, options.youtubeCookiesPath)
     this.preloadFirstSearchResult =
       options.preloadFirstSearchResult ?? options.searchClient === undefined
   }
@@ -307,7 +189,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
       trackId: track.id,
       expiresAt: this.now() + this.searchCacheTtlMs,
       controller,
-      outcome: this.resolveRemote(track, controller.signal).catch(() => undefined),
+      outcome: this.extractor.resolve(track, controller.signal).catch(() => undefined),
     }
   }
 
@@ -324,41 +206,6 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
         signal?.removeEventListener("abort", abort)
       }
     }
-    return this.resolveRemote(track, signal)
-  }
-
-  private async resolveRemote(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
-    const parsedTrack = TrackSchema.parse(track)
-    if (parsedTrack.provider !== "youtube") {
-      throw new RangeError("Track is not a YouTube track")
-    }
-    const parsedUrl = new URL(parsedTrack.url)
-    const playbackUrl =
-      this.youtubeCookiesPath === undefined
-        ? parsedTrack.url
-        : new URL(
-            `${parsedUrl.pathname}${parsedUrl.search}`,
-            "https://music.youtube.com",
-          ).toString()
-    const request = {
-      file: "yt-dlp",
-      args: [
-        "--ignore-config",
-        ...(this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]),
-        "--no-playlist",
-        "--no-warnings",
-        "-f",
-        "bestaudio",
-        "--print",
-        "%(.{url,http_headers,ext,acodec,abr,protocol})#j",
-        playbackUrl,
-      ],
-      timeoutMs: processTimeoutMs,
-      ...(signal === undefined ? {} : { signal }),
-    }
-    const result = await this.executor.run(request)
-    const media = parseResolvedOutput(result.stdout)
-    await this.policy.authorize(media.url)
-    return media
+    return this.extractor.resolve(track, signal)
   }
 }
