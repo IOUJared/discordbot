@@ -190,8 +190,9 @@ function main() {
   if (command === "remote-verify") {
     if (values.get("expect-injected-failure") !== true)
       throw new VerifierError("expected-failure-flag")
-    remoteRun(values, "drain")
-    return cleanupAssert(values)
+    const result = remoteRun(values, "drain")
+    cleanupAssert(values)
+    return result
   }
   if (command === "remote-cleanup-assert") return cleanupAssert(values)
   return remoteInspect(values)
