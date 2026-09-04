@@ -48,6 +48,15 @@ test("disk recovery removes only inputs for terminal successful operations", () 
   assert.match(owner, /volumesRemoved:0/u)
 })
 
+test("terminal space cleanup is age bounded and never prunes", () => {
+  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
+  assert.match(owner, /cleanup_terminal_space\(\)/u)
+  assert.match(owner, /MS_RETENTION_DAYS days ago/u)
+  assert.match(owner, /RepoTags/u)
+  assert.match(owner, /terminalLeaseUnchanged:true/u)
+  assert.doesNotMatch(owner, /docker (?:system|image|builder) prune/u)
+})
+
 test("benchmark results carry the next lease sequence", () => {
   const instance = model()
   const run = active(instance)

@@ -538,6 +538,23 @@ cleanup_failed_images() {
   jq --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
   jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
+cleanup_terminal_space() {
+  local run_id="$1" selected_sha="$2" before after cutoff removed id created created_epoch tags
+  require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
+  test "$(lease_value .runId)" = "$run_id" || die wrong-run
+  test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
+  test "$(lease_value .state)" = committed || { test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state; }
+  before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; cutoff="$(date -d "$MS_RETENTION_DAYS days ago" +%s)"; removed=0
+  while read -r id; do
+    test -n "$id" || continue
+    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+    tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
+    created="$(docker image inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -lt "$cutoff" || continue
+    docker image rm "$id" >/dev/null; removed=$((removed+1))
+  done < <(docker images -q --filter dangling=true --no-trunc | sort -u)
+  after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
+  jq -cn --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '{ok:true,terminalLeaseUnchanged:true,expiredDanglingImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
+}
 commit_run() {
   local run_id="$1" expected="$2" next run manifest config cursor events_until observed quiet_since quiet_until quiet_events sample1 sample2 stable_at
   require_root; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"; next=$((expected+1))
@@ -567,6 +584,7 @@ case "${1:-}" in
   recover-restoring) shift; recover_restoring "$@";;
   reclaim-consumed-inputs) shift; reclaim_consumed_inputs "$@";;
   cleanup-failed-images) shift; cleanup_failed_images "$@";;
+  cleanup-terminal-space) shift; cleanup_terminal_space "$@";;
   commit) shift; commit_run "$@";;
   state) state;;
   *) die command;;
