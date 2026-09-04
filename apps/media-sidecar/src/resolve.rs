@@ -8,6 +8,7 @@ use crate::process::{self, ProcessError, ProcessSpec};
 const API_VERSION: u8 = 1;
 const RESOLVE_DEADLINE: Duration = Duration::from_secs(20);
 const YT_DLP: &str = "/usr/local/bin/yt-dlp";
+const TEMPORARY_DIRECTORY_PARENT: &str = "/tmp/discord-music-media-sidecar";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +107,7 @@ impl Resolver {
                 executable: &self.executable,
                 arguments: &arguments,
                 deadline: self.deadline,
+                temporary_directory_parent: std::path::Path::new(TEMPORARY_DIRECTORY_PARENT),
             },
             cancelled,
         )

@@ -9,6 +9,11 @@ track_id="${last##*=}"
 record="/tmp/discord-music-sidecar-${track_id}"
 printf '%s\n' "$@" > "${record}.argv"
 /usr/bin/tr '\000' '\n' < "/proc/$$/environ" | /usr/bin/sort > "${record}.env"
+printf '%s\n' "$TMPDIR" > "${record}.tmpdir"
+if [ "$TMPDIR" != /tmp ]; then
+  /bin/mkdir -p "$TMPDIR/sentinel/nested"
+  printf 'owned\n' > "$TMPDIR/sentinel/nested/value"
+fi
 
 fixture_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../../../../spec/media-sidecar/v1/raw" && pwd)
 case "$track_id" in
@@ -54,5 +59,6 @@ case "$track_id" in
   stderr-oversized)
     /usr/bin/head -c 65537 /dev/zero | /usr/bin/tr '\000' x >&2
     ;;
+  process-error) exit 23 ;;
   *) exit 23 ;;
 esac

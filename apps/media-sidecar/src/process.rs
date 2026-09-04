@@ -3,7 +3,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    process::{ExitStatus, Stdio},
+    process::Stdio,
     task::{Context, Poll},
     time::Duration,
 };
@@ -13,14 +13,18 @@ use nix::{
     unistd::Pid,
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt as _},
     process::Command,
     sync::{mpsc, oneshot},
 };
 use tokio_util::sync::CancellationToken;
 
-const STDOUT_LIMIT: usize = 4 * 1024 * 1024;
-const STDERR_LIMIT: usize = 64 * 1024;
+#[path = "process_io.rs"]
+mod process_io;
+#[path = "process_temp.rs"]
+mod process_temp;
+
+use process_io::Event;
+use process_temp::OwnedTemporaryDirectory;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum ProcessError {
@@ -48,6 +52,7 @@ pub(crate) struct ProcessSpec<'a> {
     pub(crate) executable: &'a Path,
     pub(crate) arguments: &'a [OsString],
     pub(crate) deadline: Duration,
+    pub(crate) temporary_directory_parent: &'a Path,
 }
 
 #[derive(Debug)]
@@ -90,6 +95,7 @@ pub(crate) fn execute(spec: ProcessSpec<'_>, cancelled: CancellationToken) -> Pr
         spec.executable.to_path_buf(),
         spec.arguments.to_vec(),
         spec.deadline,
+        spec.temporary_directory_parent.to_path_buf(),
         cancelled,
         dropped.clone(),
         result_sender,
@@ -101,22 +107,31 @@ pub(crate) fn execute(spec: ProcessSpec<'_>, cancelled: CancellationToken) -> Pr
     }
 }
 
-#[derive(Debug)]
-enum Event {
-    Stdout(Result<Vec<u8>, ProcessError>),
-    Stderr(Result<Vec<u8>, ProcessError>),
-    Exited(Result<ExitStatus, ProcessError>),
-}
-
 async fn supervise(
     executable: PathBuf,
     arguments: Vec<OsString>,
     deadline: Duration,
+    temporary_directory_parent: PathBuf,
     cancelled: CancellationToken,
     dropped: CancellationToken,
     result_sender: oneshot::Sender<Result<ProcessOutput, ProcessError>>,
 ) {
-    let result = supervise_inner(&executable, &arguments, deadline, cancelled, dropped).await;
+    let temporary_directory = OwnedTemporaryDirectory::create(&temporary_directory_parent);
+    let result = match temporary_directory {
+        Ok(directory) => {
+            let result = supervise_inner(
+                &executable,
+                &arguments,
+                deadline,
+                cancelled,
+                dropped,
+                directory.path(),
+            )
+            .await;
+            directory.remove().and(result)
+        }
+        Err(error) => Err(error),
+    };
     let _ignored = result_sender.send(result);
 }
 
@@ -126,7 +141,9 @@ async fn supervise_inner(
     deadline: Duration,
     cancelled: CancellationToken,
     dropped: CancellationToken,
+    temporary_directory: Result<&Path, ProcessError>,
 ) -> Result<ProcessOutput, ProcessError> {
+    let temporary_directory = temporary_directory?;
     let mut command = Command::new(executable);
     command
         .args(arguments)
@@ -135,7 +152,7 @@ async fn supervise_inner(
         .env("LANG", "C.UTF-8")
         .env("LC_ALL", "C.UTF-8")
         .env("HOME", "/nonexistent")
-        .env("TMPDIR", "/tmp")
+        .env("TMPDIR", temporary_directory)
         .env("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -149,8 +166,8 @@ async fn supervise_inner(
     let stdout = child.stdout.take().ok_or(ProcessError::Spawn)?;
     let stderr = child.stderr.take().ok_or(ProcessError::Spawn)?;
     let (sender, mut events) = mpsc::channel(3);
-    spawn_reader(sender.clone(), stdout, STDOUT_LIMIT, true);
-    spawn_reader(sender.clone(), stderr, STDERR_LIMIT, false);
+    process_io::read_stdout(sender.clone(), stdout);
+    process_io::read_stderr(sender.clone(), stderr);
     tokio::spawn(async move {
         let event = child.wait().await.map_err(|_| ProcessError::Failed);
         let _ignored = sender.send(Event::Exited(event)).await;
@@ -206,42 +223,6 @@ async fn supervise_inner(
     stdout
         .map(|stdout| ProcessOutput { stdout })
         .ok_or(ProcessError::SupervisorClosed)
-}
-
-fn spawn_reader<R>(sender: mpsc::Sender<Event>, reader: R, limit: usize, is_stdout: bool)
-where
-    R: AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let result = read_bounded(reader, limit).await;
-        let event = if is_stdout {
-            Event::Stdout(result)
-        } else {
-            Event::Stderr(result)
-        };
-        let _ignored = sender.send(event).await;
-    });
-}
-
-async fn read_bounded<R>(mut reader: R, limit: usize) -> Result<Vec<u8>, ProcessError>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut output = Vec::with_capacity(limit.min(8192));
-    let mut chunk = [0_u8; 8192];
-    loop {
-        let count = reader
-            .read(&mut chunk)
-            .await
-            .map_err(|_| ProcessError::Failed)?;
-        if count == 0 {
-            return Ok(output);
-        }
-        if output.len().saturating_add(count) > limit {
-            return Err(ProcessError::OutputLimit);
-        }
-        output.extend_from_slice(chunk.get(..count).ok_or(ProcessError::Failed)?);
-    }
 }
 
 fn kill_group(process_group: i32) -> Result<(), ProcessError> {

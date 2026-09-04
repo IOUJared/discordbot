@@ -18,7 +18,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-const EXPECTED_ENV: &str = "HOME=/nonexistent\nLANG=C.UTF-8\nLC_ALL=C.UTF-8\nPATH=/usr/local/bin:/usr/bin:/bin\nSSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt\nTMPDIR=/tmp\n";
+const EXPECTED_ENV: &str = "HOME=/nonexistent\nLANG=C.UTF-8\nLC_ALL=C.UTF-8\nPATH=/usr/local/bin:/usr/bin:/bin\nSSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt\n";
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-yt-dlp")
@@ -39,7 +39,7 @@ fn record(id: &str, suffix: &str) -> PathBuf {
 }
 
 async fn cleanup_record(id: &str) {
-    for suffix in ["argv", "env", "pids"] {
+    for suffix in ["argv", "env", "pids", "tmpdir"] {
         let _ignored = tokio::fs::remove_file(record(id, suffix)).await;
     }
 }
@@ -187,12 +187,19 @@ async fn proxy_sentinel_receives_zero_connections() {
             .await
             .is_err()
     );
-    assert_eq!(
-        tokio::fs::read_to_string(record(&id, "env"))
-            .await
-            .expect("env"),
-        EXPECTED_ENV
-    );
+    let environment = tokio::fs::read_to_string(record(&id, "env"))
+        .await
+        .expect("env");
+    let filtered = environment
+        .lines()
+        .filter(|line| !line.starts_with("TMPDIR="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(format!("{filtered}\n"), EXPECTED_ENV);
+    assert!(environment.lines().any(|line| {
+        line.strip_prefix("TMPDIR=")
+            .is_some_and(|path| path.starts_with("/tmp/discord-music-media-sidecar/"))
+    }));
     cleanup_record(&id).await;
 }
 
