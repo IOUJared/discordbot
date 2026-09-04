@@ -13,10 +13,6 @@ services:
     volumes:
       - discord-music-data:/data
       - /opt/discord-music-secrets:/run/secrets/discord-music
-    depends_on:
-      media-sidecar:
-        condition: service_healthy
-    links: [media-sidecar]
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
       interval: 10s

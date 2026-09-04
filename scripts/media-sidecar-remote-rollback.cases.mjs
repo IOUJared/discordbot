@@ -61,8 +61,10 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "KILL",
   ])
     assert.ok(source.includes(required), `missing ${required}`)
-  for (const required of ["condition: service_healthy", "links: [media-sidecar]"])
-    assert.ok(compose.includes(required), `missing ${required}`)
+  assert.match(compose, /MEDIA_SIDECAR_URL: http:\/\/media-sidecar:3101/u)
+  assert.match(compose, /media-sidecar:[\s\S]+expose: \["3101"\]/u)
+  assert.doesNotMatch(compose, /condition: service_healthy/u)
+  assert.doesNotMatch(compose, /links: \[media-sidecar\]/u)
   assert.doesNotMatch(source, /docker (system prune|volume rm)|down[^\n]*--volumes/u)
 })
 

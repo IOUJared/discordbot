@@ -7,6 +7,7 @@ export function localVerify(values, required, assertText) {
     "utf8",
   )
   const production = readFileSync("docker-compose.yml", "utf8")
+  const deployment = readFileSync("deploy/compose.yaml", "utf8")
   const ignore = readFileSync(".dockerignore", "utf8")
   const resolve = readFileSync("apps/media-sidecar/src/resolve.rs", "utf8")
   const process = readFileSync("apps/media-sidecar/src/process.rs", "utf8")
@@ -38,7 +39,8 @@ export function localVerify(values, required, assertText) {
   )
   assertText(
     compose.includes("qa-${CHECKPOINT_SHA:?") &&
-      production.includes("MEDIA_SIDECAR_URL: http://media-sidecar:3101"),
+      production.includes("MEDIA_SIDECAR_URL: http://media-sidecar:3101") &&
+      deployment.includes("MEDIA_SIDECAR_URL: http://media-sidecar:3101"),
     "static-private-wiring",
   )
   assertText(
@@ -46,9 +48,21 @@ export function localVerify(values, required, assertText) {
     "static-deno-health",
   )
   const sidecarService = production.split("\n  media-sidecar:")[1]?.split("\n  dashboard:")[0] ?? ""
+  const deployedServer = deployment.match(/\n  server:\n([\s\S]+?)(?=\n  [a-z][a-z-]*:|\nvolumes:)/u)?.[1] ?? ""
+  const deployedSidecar =
+    deployment.match(/\n  media-sidecar:\n([\s\S]+?)(?=\n  [a-z][a-z-]*:|\nvolumes:)/u)?.[1] ?? ""
   assertText(
     sidecarService.includes('expose:\n      - "3101"') && !/^\s+ports:/mu.test(sidecarService),
     "static-no-publish",
+  )
+  assertText(
+    deployedServer !== "" &&
+      deployedSidecar !== "" &&
+      !/\n    depends_on:/u.test(deployedServer) &&
+      !/\n    links:/u.test(deployedServer) &&
+      deployedSidecar.includes('expose: ["3101"]') &&
+      !/\n    ports:/u.test(deployedSidecar),
+    "static-independent-node-startup",
   )
   assertText(
     [".git", ".omo", "secrets/", "**/target/", "*cookies*"].every((entry) =>
