@@ -506,6 +506,9 @@ reclaim_consumed_inputs() {
   done < <(jq -r '.acceptedOperations[]|select(.status=="succeeded")|.sequence' "$MS_LEASE")
   jq -cn --argjson removed "$removed" --argjson bytes "$bytes" '{ok:true,consumedInputsRemoved:$removed,bytesFreed:$bytes,volumesRemoved:0}'
 }
+terminal_cleanup_build_sequence() {
+  jq -er '[.acceptedOperations[]|select(.operation=="build" or .operation=="build-server" or .operation=="build-sidecar")]|last|select(.status=="failed" or .status=="superseded")|.sequence|select(type=="number" and .>0 and floor==.)' "$1"
+}
 task_build_image_ids() {
   local candidate run_id manifest terminal sequence log
   for candidate in "$MS_BACKUP"/*; do
@@ -518,7 +521,7 @@ task_build_image_ids() {
     while read -r sequence; do
       log="$candidate/operations/$sequence.log"; test -r "$log" || continue
       sed $'s/\033\[[0-9;]*m//g' "$log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p'
-    done < <(jq -r '.acceptedOperations[]|select(.operation=="build")|.sequence' "$terminal")
+    done < <(terminal_cleanup_build_sequence "$terminal")
   done | sort -u
 }
 task_build_container_ids() {
@@ -533,7 +536,7 @@ task_build_container_ids() {
     while read -r sequence; do
       log="$candidate/operations/$sequence.log"; test -r "$log" || continue
       sed $'s/\033\[[0-9;]*m//g' "$log" | sed -n 's/^ ---> Running in \([0-9a-f]\{12,64\}\)$/\1/p'
-    done < <(jq -r '.acceptedOperations[]|select(.operation=="build")|.sequence' "$terminal")
+    done < <(terminal_cleanup_build_sequence "$terminal")
   done | sort -u
 }
 task_event_floor() {
@@ -551,15 +554,16 @@ cleanup_failed_images() {
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
   test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state
-  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0; removed_superseded=0; removed_qa=0
+  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
+  build_sequence="$(terminal_cleanup_build_sequence "$MS_LEASE")" || die cleanup-build-operation
+  build_log="$run/operations/$build_sequence.log"; test -r "$build_log" || die cleanup-build-log
+  before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0; removed_superseded=0; removed_qa=0
   prior_server="$(jq -r .priorState.serverImage "$manifest")"; prior_sidecar="$(jq -r '.priorState.sidecarImage // empty' "$manifest")"
   for tags in "discord-music-server:$selected_sha" "discord-music-media-sidecar:$selected_sha"; do
     id="$(docker image inspect -f '{{.Id}}' "$tags" 2>/dev/null || true)"; test -n "$id" || continue
     docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && die cleanup-image-in-use
     docker image rm "$tags" >/dev/null; removed=$((removed+1))
   done
-  build_sequence="$(jq -r '[.acceptedOperations[]|select(.operation=="build")|.sequence]|last // empty' "$MS_LEASE")"; build_log="$run/operations/$build_sequence.log"
-  test -r "$build_log" || die cleanup-build-log
   for _ in 1 2 3; do
     while read -r id; do
       id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
