@@ -279,7 +279,7 @@ YAML
         probe="$(jq -ce '{healthStatus,searchStatus,resultCount}' <<<"$probe")"
         node_probe="$(docker exec discord-music node --input-type=module -e '
           let dnsCount=0, healthStatus=0, searchStatus=0, resultCount=0, failure="none"
-          const {Agent,fetch:undiciFetch}=await import("undici")
+          const {Agent,fetch:undiciFetch}=await import("/app/apps/server/node_modules/undici/index.js")
           async function agentStatus(fetcher) {
             const dispatcher=new Agent({connections:1})
             try { return (await fetcher("http://media-sidecar:3101/healthz",{dispatcher,signal:AbortSignal.timeout(5000)})).status } catch { return 0 } finally { await dispatcher.close() }
