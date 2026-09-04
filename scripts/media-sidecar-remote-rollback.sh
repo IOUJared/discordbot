@@ -591,6 +591,37 @@ repair_terminal_retention() {
   repaired="$(repair_retained_tags_locked)"
   jq -cn --argjson repaired "$repaired" '{ok:true,terminalLeaseUnchanged:true,rollbackTagsRepaired:$repaired,volumesRemoved:0}'
 }
+docker_image_identity() {
+  while read -r image; do
+    test -n "$image" || continue
+    docker image inspect -f '{{.Id}} {{json .RepoDigests}}' "$image"
+  done < <(docker images -q --no-trunc | sort -u)
+}
+docker_volume_identity() {
+  while read -r volume; do
+    test -n "$volume" || continue
+    docker volume inspect -f '{{.Name}} {{.Driver}} {{.Mountpoint}} {{json .Labels}} {{json .Options}} {{.Scope}}' "$volume"
+  done < <(docker volume ls -q | sort -u)
+}
+cleanup_terminal_build_cache() {
+  local run_id="$1" selected_sha="$2" config images_before images_after volumes_before volumes_after state_before state_after before after
+  require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
+  test "$(lease_value .runId)" = "$run_id" || die wrong-run
+  test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
+  test "$(lease_value .state)" = committed || { test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cache-cleanup-state; }
+  jq -e '.activeMutation==null and (.acceptedOperations|all(.status!="accepted"))' "$MS_LEASE" >/dev/null || die cache-cleanup-operation-active
+  ps -eo args= | grep -E '(^|[ /])(docker|buildctl|buildx)[^[:cntrl:]]* (build|bake)( |$)' >/dev/null && die cache-cleanup-build-active
+  config="$(active_config)"; images_before="$(docker_image_identity | sort | sha256sum | cut -d' ' -f1)"; volumes_before="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
+  state_before="$(state_fingerprint "$config")"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
+  docker builder prune --filter until=1h --force >/dev/null
+  images_after="$(docker_image_identity | sort | sha256sum | cut -d' ' -f1)"; volumes_after="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
+  state_after="$(state_fingerprint "$config")"; after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
+  test "$images_before" = "$images_after" || die cache-cleanup-images-changed
+  test "$volumes_before" = "$volumes_after" || die cache-cleanup-volumes-changed
+  test "$state_before" = "$state_after" || die cache-cleanup-state-changed
+  test "$after" -ge 2048 || die cache-cleanup-capacity
+  jq -cn --argjson before "$before" --argjson after "$after" '{ok:true,terminalLeaseUnchanged:true,filter:"until=1h",imagesUnchanged:true,volumesUnchanged:true,liveStateUnchanged:true,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
+}
 commit_run() {
   local run_id="$1" expected="$2" next run manifest config cursor events_until observed quiet_since quiet_until quiet_events sample1 sample2 stable_at
   require_root; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"; next=$((expected+1))
@@ -622,6 +653,7 @@ case "${1:-}" in
   cleanup-failed-images) shift; cleanup_failed_images "$@";;
   cleanup-terminal-space) shift; cleanup_terminal_space "$@";;
   repair-terminal-retention) shift; repair_terminal_retention "$@";;
+  cleanup-terminal-build-cache) shift; cleanup_terminal_build_cache "$@";;
   commit) shift; commit_run "$@";;
   state) state;;
   *) die command;;

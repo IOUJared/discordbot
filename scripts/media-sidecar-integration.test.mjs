@@ -58,7 +58,71 @@ test("terminal space cleanup preserves tagged and digest-pinned images and never
   assert.match(owner, /RepoTags/u)
   assert.match(owner, /RepoDigests/u)
   assert.match(owner, /terminalLeaseUnchanged:true/u)
-  assert.doesNotMatch(owner, /docker (?:system|image|builder) prune/u)
+  assert.match(owner, /docker builder prune --filter until=1h --force/u)
+  assert.doesNotMatch(owner, /docker (?:system|image|volume) prune/u)
+  assert.doesNotMatch(owner, /docker builder prune(?! --filter until=1h --force)/u)
+})
+
+test("terminal build-cache cleanup rejects active builds and preserves image and volume identity", () => {
+  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
+  const start = owner.indexOf("cleanup_terminal_build_cache() {")
+  const definition = owner.slice(start, owner.indexOf("commit_run() {", start))
+  const fixture = mkdtempSync(join(tmpdir(), "media-build-cache-cleanup-"))
+  const lease = join(fixture, "lease.json")
+  const lock = join(fixture, "deploy.lock")
+  const marker = join(fixture, "pruned")
+  const runId = `1-${"d".repeat(32)}`
+  const sha = "e".repeat(40)
+  writeFileSync(
+    lease,
+    JSON.stringify({
+      runId,
+      selectedSha: sha,
+      state: "committed",
+      restoreState: "idle",
+      activeMutation: null,
+      acceptedOperations: [],
+    }),
+  )
+  const probe = `
+MS_LOCK=${JSON.stringify(lock)}
+MS_LEASE=${JSON.stringify(lease)}
+MS_REPO=/opt/discord-music
+require_root() { :; }
+require_paths() { :; }
+die() { printf '%s\\n' "$1" >&2; exit 1; }
+lease_value() { jq -er "$1" "$MS_LEASE"; }
+active_config() { printf 'compose'; }
+state_fingerprint() { printf 'stable-state'; }
+docker_image_identity() { printf 'same-images\\n'; }
+docker_volume_identity() { printf 'same-volumes\\n'; }
+ps() { test "\${FAKE_ACTIVE:-0}" = 1 && printf 'docker build /source\\n' || :; }
+df() { printf 'Filesystem 1M-blocks Used Available Capacity Mounted\\n/dev/test 9000 4000 4096 50%% /\\n'; }
+docker() {
+  test "$*" = 'builder prune --filter until=1h --force'
+  : >${JSON.stringify(marker)}
+}
+${definition}
+cleanup_terminal_build_cache ${JSON.stringify(runId)} ${JSON.stringify(sha)}
+`
+  try {
+    const active = spawnSync("bash", ["-s"], {
+      input: probe,
+      encoding: "utf8",
+      env: { ...process.env, FAKE_ACTIVE: "1" },
+    })
+    assert.equal(active.status, 1)
+    assert.match(active.stderr, /cache-cleanup-build-active/u)
+    assert.throws(() => readFileSync(marker))
+
+    const idle = spawnSync("bash", ["-s"], { input: probe, encoding: "utf8" })
+    assert.equal(idle.status, 0, idle.stderr)
+    assert.match(idle.stdout, /"filter":"until=1h"/u)
+    assert.match(idle.stdout, /"imagesUnchanged":true,"volumesUnchanged":true/u)
+    assert.equal(readFileSync(marker, "utf8"), "")
+  } finally {
+    rmSync(fixture, { recursive: true, force: true })
+  }
 })
 
 test("retention repair recreates only a missing validated rollback tag and is idempotent", () => {
