@@ -7,13 +7,8 @@ import { join } from "node:path"
 
 const SHA = /^[0-9a-f]{40}$/u
 const PROJECT = /^discord-music-sidecar-qa-[0-9a-f]{12}$/u
-const COMMANDS = new Set([
-  "local-verify",
-  "remote-preflight-and-verify",
-  "remote-verify",
-  "remote-cleanup-assert",
-  "remote-inspect",
-])
+const COMMAND =
+  /^(local-verify|remote-preflight-and-verify|remote-verify|remote-cleanup-assert|remote-inspect)$/u
 
 class VerifierError extends Error {
   constructor(stage) {
@@ -89,6 +84,7 @@ function localVerify(values) {
   const ignore = readFileSync(".dockerignore", "utf8")
   const resolve = readFileSync("apps/media-sidecar/src/resolve.rs", "utf8")
   const process = readFileSync("apps/media-sidecar/src/process.rs", "utf8")
+  const remote = readFileSync("scripts/verify-media-sidecar-image-remote.sh", "utf8")
   const pins = [
     "rust:1.98.0-bookworm@sha256:e536cf316987faedfe8ae120f83b70c7df0068fdb4fc9efcce55c71a625001d5",
     "debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
@@ -146,6 +142,10 @@ function localVerify(values) {
   assertText(
     process.includes(".env_clear()") && childKeys === "HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR",
     "static-child-environment",
+  )
+  assertText(
+    !/docker compose[^\n]* exec/u.test(remote) && remote.includes("checkpoint=%s"),
+    "static-noninteractive-remote",
   )
   return { static: true }
 }
@@ -221,7 +221,11 @@ function remoteRun(values, mode) {
     },
   )
   const expected = mode === "drain" ? 86 : 0
-  if (result.status !== expected || !result.stdout.includes("cleanup=true")) {
+  if (
+    result.status !== expected ||
+    !result.stdout.includes("cleanup=true") ||
+    !result.stdout.includes(`checkpoint=${sha}`)
+  ) {
     const failure = result.stdout.match(/failure_stage=([a-z-]+)/u)?.[1] ?? "unknown"
     throw new VerifierError(`remote-${failure}`)
   }
@@ -239,7 +243,7 @@ function cleanupAssert(values) {
 
 function main() {
   const command = process.argv[2]
-  if (command === undefined || !COMMANDS.has(command)) throw new VerifierError("command")
+  if (command === undefined || !COMMAND.test(command)) throw new VerifierError("command")
   const values = options(process.argv.slice(3))
   if (command === "local-verify") return localVerify(values)
   if (command === "remote-preflight-and-verify") return remoteRun(values, "smoke")

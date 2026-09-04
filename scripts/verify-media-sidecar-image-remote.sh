@@ -25,9 +25,9 @@ test "$(docker inspect -f '{{.State.Health.Status}}' "$sidecar")" = healthy; sta
 test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = "$CHECKPOINT_SHA"
 test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.source-tree"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = "$CHECKPOINT_TREE"
 test -z "$(docker port "$sidecar")"; stage=private-health
-docker compose -p "$PROJECT" -f "$COMPOSE" exec -T probe node -e "fetch('http://media-sidecar:3101/healthz').then(async r=>{if(r.status!==200||JSON.stringify(await r.json())!=='{\"version\":1,\"status\":\"ok\"}')process.exit(1)})" >"$raw" 2>&1
+docker exec "$probe" node -e "fetch('http://media-sidecar:3101/healthz').then(async r=>{if(r.status!==200||JSON.stringify(await r.json())!=='{\"version\":1,\"status\":\"ok\"}')process.exit(1)})" >"$raw" 2>&1
 stage=sidecar-runtime
-docker compose -p "$PROJECT" -f "$COMPOSE" exec -T media-sidecar sh -ceu '
+docker exec "$sidecar" sh -ceu '
 test "$(cat /proc/1/comm)" = tini; tr "\0" " " </proc/1/cmdline | grep -Eq "^/usr/bin/tini -s -- /usr/local/bin/discord-music-media-sidecar"
 child="$(for p in /proc/[0-9]*; do test -r "$p/stat" || continue; set -- $(cat "$p/stat"); test "$4" = 1 && test "$2" = "(discord-music-)" && echo "${p##*/}" && break; done)"; test -n "$child"
 test "$(awk "/^Uid:/ {print \$2}" "/proc/$child/status")" != 0
@@ -39,16 +39,16 @@ echo "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a  /usr/loc
 ! command -v node; ! command -v bun; ! command -v qjs; ! command -v ffmpeg
 ! grep -aEq "test-upstream|media-sidecar-test-harness" /usr/local/bin/discord-music-media-sidecar'
 stage=node-fallback-tools
-docker compose -p "$PROJECT" -f "$COMPOSE" exec -T probe sh -ceu 'ffmpeg -version >/dev/null; yt-dlp --version >/dev/null'
+docker exec "$probe" sh -ceu 'ffmpeg -version >/dev/null; yt-dlp --version >/dev/null'
 if test "$VERIFY_MODE" = smoke; then
   stage=challenge-smoke
-  docker compose -p "$PROJECT" -f "$COMPOSE" exec -d probe node -e "const fs=require('node:fs'),net=require('node:net');fs.writeFileSync('/tmp/proxy-count','0');let n=0;net.createServer(s=>{n++;fs.writeFileSync('/tmp/proxy-count',String(n));s.destroy()}).listen(43123,'0.0.0.0');setInterval(()=>{},2147483647)"
-  docker compose -p "$PROJECT" -f "$COMPOSE" exec -T media-sidecar sh -ceu 'umask 077; raw=/tmp/challenge.raw; trap "rm -f -- $raw" EXIT; HTTP_PROXY=http://probe:43123 HTTPS_PROXY=http://probe:43123 ALL_PROXY=http://probe:43123 NO_PROXY= http_proxy=http://probe:43123 https_proxy=http://probe:43123 all_proxy=http://probe:43123 no_proxy= /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1'
-  test "$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T probe cat /tmp/proxy-count | tr -d '\r')" = 0
+  docker exec -d "$probe" node -e "const fs=require('node:fs'),net=require('node:net');fs.writeFileSync('/tmp/proxy-count','0');let n=0;net.createServer(s=>{n++;fs.writeFileSync('/tmp/proxy-count',String(n));s.destroy()}).listen(43123,'0.0.0.0');setInterval(()=>{},2147483647)"
+  docker exec "$sidecar" sh -ceu 'umask 077; raw=/tmp/challenge.raw; trap "rm -f -- $raw" EXIT; HTTP_PROXY=http://probe:43123 HTTPS_PROXY=http://probe:43123 ALL_PROXY=http://probe:43123 NO_PROXY= http_proxy=http://probe:43123 https_proxy=http://probe:43123 all_proxy=http://probe:43123 no_proxy= /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1'
+  test "$(docker exec "$probe" cat /tmp/proxy-count | tr -d '\r')" = 0
 fi
 if test "$VERIFY_MODE" = drain; then
   stage=saturated-drain
-  docker compose -p "$PROJECT" -f "$COMPOSE" exec -d probe node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
+  docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
   observed=false; deno_observed=false; : >"$work/children"
   for attempt in $(seq 1 100); do
     state="$(docker exec "$sidecar" sh -ceu 'count=0; deno=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; deno) deno=1;; esac; done; printf "%s:%s" "$count" "$deno"')"
