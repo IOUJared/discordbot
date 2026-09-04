@@ -49,6 +49,27 @@ function rollout(stage) {
   return eventCount((event) => event.stage === stage)
 }
 
+function clientFailureCounts(input) {
+  const outcomes = [
+    "invalid_request",
+    "request_rejected",
+    "overloaded",
+    "extractor",
+    "deadline",
+    "client_deadline",
+    "internal",
+    "unavailable",
+    "protocol",
+    "caller_abort",
+  ]
+  return Object.fromEntries(
+    outcomes.map((outcome) => [
+      outcome,
+      input.filter((event) => event.stage === "client_failure" && event.outcome === outcome).length,
+    ]),
+  )
+}
+
 async function live() {
   const warmups = Array.from(
     { length: 30 },
@@ -129,6 +150,7 @@ async function live() {
         firstFingerprints.length === 40 &&
         firstFingerprints.every((fingerprint) => /^[0-9a-f]{64}$/u.test(fingerprint)),
       fingerprintCount: firstFingerprints.length,
+      clientFailures: clientFailureCounts(acceptEvents),
       resolve: { observed: true, success: resolveSuccess, durationMs: resolveMs },
       internalState: media.rollout.state(),
       errors: 0,

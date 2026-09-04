@@ -222,6 +222,7 @@ test("live resolve uses the first non-empty acceptance result", () => {
   assert.match(benchmark, /first\.flatMap\(\(\{ results \}\) => results\)\.at\(0\)/u)
   assert.match(benchmark, /resolveSuccess = false[\s\S]+try[\s\S]+catch/u)
   assert.match(benchmark, /nonEmptyResults: first\.filter/u)
+  assert.match(benchmark, /clientFailures: clientFailureCounts\(acceptEvents\)/u)
 })
 
 test("public integration output never exposes a random run-id suffix", () => {
