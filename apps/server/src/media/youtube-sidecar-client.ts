@@ -65,28 +65,39 @@ async function readBoundedBody(
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
-  while (true) {
-    const result = await reader.read()
-    if (result.done) break
-    size += result.value.byteLength
-    if (size > RESPONSE_LIMIT_BYTES) {
-      await reader.cancel()
-      throw sidecarProtocolError()
-    }
-    chunks.push(result.value)
-  }
-  const bytes = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
   try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+    while (true) {
+      const result = await reader.read()
+      if (result.done) break
+      size += result.value.byteLength
+      if (size > RESPONSE_LIMIT_BYTES) throw sidecarProtocolError()
+      chunks.push(result.value)
+    }
+    const bytes = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    try {
+      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof TypeError) throw sidecarProtocolError()
+      throw error
+    }
   } catch (error) {
-    if (error instanceof SyntaxError || error instanceof TypeError) throw sidecarProtocolError()
+    await Promise.allSettled([reader.cancel(error)])
     throw error
+  } finally {
+    reader.releaseLock()
   }
+}
+
+async function cancelResponseBody(
+  response: Awaited<ReturnType<typeof undiciFetch>>,
+  reason: SidecarError,
+): Promise<void> {
+  if (response.body !== null) await Promise.allSettled([response.body.cancel(reason)])
 }
 
 export class YouTubeSidecarClient {
@@ -194,8 +205,14 @@ export class YouTubeSidecarClient {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       } as const
       const response = await undiciFetch(new URL(path, this.baseUrl), requestOptions)
-      if (response.status >= 300 && response.status < 400) throw sidecarProtocolError()
-      if (response.headers.get("content-type") !== "application/json") throw sidecarProtocolError()
+      if (
+        (response.status >= 300 && response.status < 400) ||
+        response.headers.get("content-type") !== "application/json"
+      ) {
+        const error = sidecarProtocolError()
+        await cancelResponseBody(response, error)
+        throw error
+      }
       const parsedBody = await readBoundedBody(response)
       if (!response.ok) throw parseSidecarHttpError(response.status, parsedBody)
       const parsed = parse(parsedBody)
