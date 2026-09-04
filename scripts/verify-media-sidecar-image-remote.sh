@@ -110,12 +110,11 @@ until test -f /tmp/qa-challenge-start; do sleep 0.001; done
 for round in 1 2 3 4 5; do
   /usr/bin/timeout 30 /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1 & challenge=$!
   while kill -0 "$challenge" 2>/dev/null; do
-    for p in /proc/[0-9]*; do
-      test -r "$p/comm" || continue
-      comm="$(cat "$p/comm")"
-      case "$comm" in
-        deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) : >/tmp/qa-deno-observed; exit 0;; esac;;
-      esac
+    for extractor in $(cat "/proc/$challenge/task/$challenge/children" 2>/dev/null || true); do
+      case "$(cat "/proc/$extractor/comm" 2>/dev/null || true)" in yt-dlp*) ;; *) continue;; esac
+      for child in $(cat "/proc/$extractor/task/$extractor/children" 2>/dev/null || true); do
+        test "$(cat "/proc/$child/comm" 2>/dev/null || true)" = deno && { : >/tmp/qa-deno-observed; exit 0; }
+      done
     done
   done
   wait "$challenge" 2>/dev/null || true
