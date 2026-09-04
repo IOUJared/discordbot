@@ -32,6 +32,28 @@ export type SidecarClientObservation = {
 }
 export type SidecarObservationSink = (event: SidecarClientObservation) => void
 
+export type ExtractorRolloutMode = "disabled" | "shadow" | "rust"
+export type ExtractorRolloutState = "disabled" | "unknown" | "ready" | "degraded"
+export type ExtractorRolloutStage =
+  | "shadow_start"
+  | "shadow_skip"
+  | "shadow_match"
+  | "shadow_mismatch"
+  | "local_extraction"
+  | "fallback"
+  | "sidecar_outcome"
+export type ExtractorRolloutObservation = {
+  readonly schema: typeof MEDIA_SIDECAR_OBSERVATION_SCHEMA
+  readonly stage: ExtractorRolloutStage
+  readonly correlationId: string
+  readonly mode: ExtractorRolloutMode
+  readonly state: ExtractorRolloutState
+  readonly pendingShadow: number
+  readonly outcome?: SidecarFailureKind
+  readonly fingerprint?: string
+}
+export type ExtractorRolloutObservationSink = (event: ExtractorRolloutObservation) => void
+
 export class SidecarError extends Error {}
 export class SidecarInvalidRequestError extends SidecarError {
   readonly name = "SidecarInvalidRequestError"
