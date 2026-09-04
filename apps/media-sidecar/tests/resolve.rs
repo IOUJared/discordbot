@@ -1,19 +1,13 @@
 #![cfg(unix)]
-#![allow(
-    dead_code,
-    missing_docs,
-    unreachable_pub,
-    reason = "production modules are compiled through this isolated integration harness before route wiring"
-)]
-#![allow(
-    clippy::expect_used,
-    reason = "test fixture setup failures must terminate their owning scenario"
-)]
+#![allow(dead_code, reason = "isolated pre-route integration module")]
+#![allow(missing_docs, reason = "isolated pre-route integration module")]
+#![allow(clippy::redundant_pub_crate, reason = "path harness")]
+#![allow(clippy::expect_used, reason = "fixture failure terminates its test")]
 
 #[path = "../src/process.rs"]
-mod process;
+pub(crate) mod process;
 #[path = "../src/resolve.rs"]
-mod resolve;
+pub(crate) mod resolve;
 
 use std::{path::PathBuf, time::Duration};
 

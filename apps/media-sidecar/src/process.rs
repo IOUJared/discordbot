@@ -23,7 +23,7 @@ const STDOUT_LIMIT: usize = 4 * 1024 * 1024;
 const STDERR_LIMIT: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ProcessError {
+pub(crate) enum ProcessError {
     #[error("spawn_failed")]
     Spawn,
     #[error("process_failed")]
@@ -39,19 +39,19 @@ pub enum ProcessError {
 }
 
 #[derive(Debug)]
-pub struct ProcessOutput {
-    pub stdout: Vec<u8>,
+pub(crate) struct ProcessOutput {
+    pub(crate) stdout: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ProcessSpec<'a> {
-    pub executable: &'a Path,
-    pub arguments: &'a [OsString],
-    pub deadline: Duration,
+pub(crate) struct ProcessSpec<'a> {
+    pub(crate) executable: &'a Path,
+    pub(crate) arguments: &'a [OsString],
+    pub(crate) deadline: Duration,
 }
 
 #[derive(Debug)]
-pub struct ProcessExecution {
+pub(crate) struct ProcessExecution {
     result: oneshot::Receiver<Result<ProcessOutput, ProcessError>>,
     dropped: CancellationToken,
     completed: bool,
@@ -83,7 +83,7 @@ impl Drop for ProcessExecution {
     }
 }
 
-pub fn execute(spec: ProcessSpec<'_>, cancelled: CancellationToken) -> ProcessExecution {
+pub(crate) fn execute(spec: ProcessSpec<'_>, cancelled: CancellationToken) -> ProcessExecution {
     let (result_sender, result) = oneshot::channel();
     let dropped = CancellationToken::new();
     tokio::spawn(supervise(

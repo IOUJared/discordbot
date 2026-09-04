@@ -11,38 +11,38 @@ const YT_DLP: &str = "/usr/local/bin/yt-dlp";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ResolveRequest {
-    pub version: u8,
-    pub track: TrackRequest,
+pub(crate) struct ResolveRequest {
+    pub(crate) version: u8,
+    pub(crate) track: TrackRequest,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TrackRequest {
-    pub id: String,
-    pub url: String,
+pub(crate) struct TrackRequest {
+    pub(crate) id: String,
+    pub(crate) url: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ResolveResponse {
-    pub version: u8,
-    pub media: RemoteMedia,
+pub(crate) struct ResolveResponse {
+    pub(crate) version: u8,
+    pub(crate) media: RemoteMedia,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteMedia {
-    pub kind: &'static str,
-    pub url: String,
-    pub headers: BTreeMap<String, String>,
-    pub container: String,
-    pub codec: String,
-    pub bitrate_kbps: Option<u32>,
-    pub seekable: bool,
+pub(crate) struct RemoteMedia {
+    pub(crate) kind: &'static str,
+    pub(crate) url: String,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) container: String,
+    pub(crate) codec: String,
+    pub(crate) bitrate_kbps: Option<u32>,
+    pub(crate) seekable: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ResolveError {
+pub(crate) enum ResolveError {
     #[error("invalid_request")]
     InvalidRequest,
     #[error("extractor_failed")]
@@ -60,14 +60,14 @@ pub enum ResolveError {
 }
 
 #[derive(Clone, Debug)]
-pub struct Resolver {
+pub(crate) struct Resolver {
     executable: PathBuf,
     deadline: Duration,
     cookies: Option<PathBuf>,
 }
 
 impl Resolver {
-    pub fn production(cookies: Option<PathBuf>) -> Self {
+    pub(crate) fn production(cookies: Option<PathBuf>) -> Self {
         Self {
             executable: PathBuf::from(YT_DLP),
             deadline: RESOLVE_DEADLINE,
@@ -76,7 +76,7 @@ impl Resolver {
     }
 
     #[cfg(test)]
-    pub const fn for_test(
+    pub(crate) const fn for_test(
         executable: PathBuf,
         deadline: Duration,
         cookies: Option<PathBuf>,
@@ -88,7 +88,7 @@ impl Resolver {
         }
     }
 
-    pub async fn resolve(
+    pub(crate) async fn resolve(
         &self,
         request: &ResolveRequest,
         cancelled: CancellationToken,
