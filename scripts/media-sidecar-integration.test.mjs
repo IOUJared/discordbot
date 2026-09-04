@@ -40,6 +40,14 @@ function active(instance, kind = "deploy") {
   return { ...run, sequence: tagged.sequence }
 }
 
+test("disk recovery removes only inputs for terminal successful operations", () => {
+  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
+  assert.match(owner, /reclaim_consumed_inputs\(\)/u)
+  assert.match(owner, /select\(\.status=="succeeded"\)\|\.sequence/u)
+  assert.match(owner, /input="\$run\/operations\/\$sequence\.input"/u)
+  assert.match(owner, /volumesRemoved:0/u)
+})
+
 test("preflight is read-only and redacts protected bytes", () => {
   const instance = model()
   const before = structuredClone(instance.live)

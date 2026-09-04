@@ -423,6 +423,20 @@ recover_restoring() {
   restore_locked "$run_id" || die restore-pending
   jq -cn --arg runId "$run_id" '{ok:true,runId:$runId,state:"expired",restoreState:"restored",stableSamples:2,recoveryOwner:true}'
 }
+reclaim_consumed_inputs() {
+  local run_id="$1" run sequence input removed bytes size
+  require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
+  test "$(lease_value .runId)" = "$run_id" || die wrong-run
+  test "$(lease_value .state)" = active || die reclaim-state
+  run="$MS_BACKUP/$run_id"; removed=0; bytes=0
+  while read -r sequence; do
+    input="$run/operations/$sequence.input"
+    test -f "$input" || continue
+    size="$(stat -c %s "$input")"; rm -f -- "$input"
+    removed=$((removed+1)); bytes=$((bytes+size))
+  done < <(jq -r '.acceptedOperations[]|select(.status=="succeeded")|.sequence' "$MS_LEASE")
+  jq -cn --argjson removed "$removed" --argjson bytes "$bytes" '{ok:true,consumedInputsRemoved:$removed,bytesFreed:$bytes,volumesRemoved:0}'
+}
 task_build_image_ids() {
   local candidate run_id manifest terminal sequence log
   for candidate in "$MS_BACKUP"/*; do
@@ -565,6 +579,7 @@ case "${1:-}" in
   watchdog) shift; watchdog "$@";;
   delayed-daemon) shift; delayed_daemon "$@";;
   recover-restoring) shift; recover_restoring "$@";;
+  reclaim-consumed-inputs) shift; reclaim_consumed_inputs "$@";;
   cleanup-failed-images) shift; cleanup_failed_images "$@";;
   commit) shift; commit_run "$@";;
   state) state;;
