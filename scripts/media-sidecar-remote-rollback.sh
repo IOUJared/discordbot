@@ -89,6 +89,30 @@ public_health() {
   value="$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health)"
   jq -ce 'if (keys|sort)==["discord","status","uptime","voice"] then . else error("health keys") end' <<<"$value"
 }
+repair_retained_tags_locked() {
+  local cutoff candidate run_id manifest terminal role tag expected source repaired
+  cutoff="$(date -d "$MS_RETENTION_DAYS days ago" +%s)"; repaired=0
+  for candidate in "$MS_BACKUP"/*; do
+    test -d "$candidate" || continue; test "$(stat -c %Y "$candidate")" -ge "$cutoff" || continue
+    run_id="${candidate##*/}"; [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
+    manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
+    test -r "$manifest" && test -r "$terminal" || continue
+    jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '.schema==$schema and .runId==$runId and (.selectedSha|test("^[0-9a-f]{40}$"))' "$manifest" >/dev/null || continue
+    jq -e --arg runId "$run_id" '.runId==$runId and (.state=="committed" or (.state=="expired" and .restoreState=="restored"))' "$terminal" >/dev/null || continue
+    test "$(sha256sum "$candidate/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || continue
+    test "$(sha256sum "$candidate/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$manifest")" || continue
+    for role in server sidecar; do
+      tag="$(jq -r --arg role "$role" '.rollbackTags[$role] // empty' "$manifest")"; test -n "$tag" || continue
+      expected="discord-music-rollback:$run_id-$role"; test "$tag" = "$expected" || die retention-tag-invalid
+      docker image inspect "$tag" >/dev/null 2>&1 && continue
+      source="$(jq -r --arg role "$role" '.priorState[($role+"Image")] // empty' "$manifest")"
+      [[ "$source" =~ ^sha256:[0-9a-f]{64}$ ]] || die retention-source-invalid
+      docker image inspect "$source" >/dev/null 2>&1 || die retention-source-missing
+      docker image tag "$source" "$tag"; repaired=$((repaired+1))
+    done
+  done
+  printf '%s\n' "$repaired"
+}
 state_json() {
   local config="$1" working env_file server sidecar server_image sidecar_image server_ref sidecar_ref volumes health mode
   working="$(dirname "$config")"; env_file="$working/.env"
@@ -159,6 +183,7 @@ begin_run() {
     sync -f "$MS_BACKUP/$prior_id/terminal.json.tmp"
     mv -f "$MS_BACKUP/$prior_id/terminal.json.tmp" "$MS_BACKUP/$prior_id/terminal.json"
     sync -f "$MS_BACKUP/$prior_id"
+    repair_retained_tags_locked >/dev/null
   fi
   local generation random run_id temp run config working env_file state health cursor now deadline
   generation="$(test -r "$MS_COUNTER" && cat "$MS_COUNTER" || echo 0)"; [[ "$generation" =~ ^[0-9]+$ ]] || die counter-invalid; generation=$((generation+1))
@@ -557,6 +582,15 @@ cleanup_terminal_space() {
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
   jq -cn --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '{ok:true,terminalLeaseUnchanged:true,expiredDanglingImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
+repair_terminal_retention() {
+  local run_id="$1" selected_sha="$2" repaired
+  require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
+  test "$(lease_value .runId)" = "$run_id" || die wrong-run
+  test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
+  test "$(lease_value .state)" = committed || { test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die repair-state; }
+  repaired="$(repair_retained_tags_locked)"
+  jq -cn --argjson repaired "$repaired" '{ok:true,terminalLeaseUnchanged:true,rollbackTagsRepaired:$repaired,volumesRemoved:0}'
+}
 commit_run() {
   local run_id="$1" expected="$2" next run manifest config cursor events_until observed quiet_since quiet_until quiet_events sample1 sample2 stable_at
   require_root; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"; next=$((expected+1))
@@ -587,6 +621,7 @@ case "${1:-}" in
   reclaim-consumed-inputs) shift; reclaim_consumed_inputs "$@";;
   cleanup-failed-images) shift; cleanup_failed_images "$@";;
   cleanup-terminal-space) shift; cleanup_terminal_space "$@";;
+  repair-terminal-retention) shift; repair_terminal_retention "$@";;
   commit) shift; commit_run "$@";;
   state) state;;
   *) die command;;
