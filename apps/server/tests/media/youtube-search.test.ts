@@ -100,4 +100,54 @@ describe("YouTube low-latency search boundary", () => {
     // Then: title/artist trimming, IDs, URLs, durations, scores, and order match the shared fixture exactly.
     expect(actual).toEqual(expected.results)
   })
+
+  it("matches Zod code-point limits and thumbnail URL candidates", () => {
+    // Given: astral and combining boundaries plus non-HTTP and invalid thumbnail candidates.
+    const astral513Utf16 = `${"😀".repeat(256)}a`
+    const combining512CodePoints = "e\u0301".repeat(256)
+    const renderer = (id: string, title: string, thumbnails: unknown) => ({
+      videoRenderer: {
+        videoId: id,
+        title: { runs: [{ text: title }] },
+        ownerText: { runs: [{ text: "Artist" }] },
+        lengthText: { simpleText: "1:00" },
+        thumbnail: { thumbnails },
+      },
+    })
+    const candidates = {
+      contents: [
+        renderer("astral-513-utf16", astral513Utf16, [{ url: "ftp://images.example/cover" }]),
+        renderer("combining-512-code-points", combining512CodePoints, [
+          { url: "data:text/plain,cover" },
+        ]),
+        renderer("astral-513-code-points", "😀".repeat(513), [
+          { url: "https://images.example/cover" },
+        ]),
+        renderer("relative-before-valid", "Title", [
+          { url: "/relative" },
+          { url: "https://images.example/cover" },
+        ]),
+        renderer("malformed-before-valid", "Title", [
+          { url: "not a url" },
+          { url: "https://images.example/cover" },
+        ]),
+      ],
+    }
+
+    // When: the retained Node parser normalizes the bounded renderer window.
+    const actual = parseYouTubeSearchResponse(candidates)
+
+    // Then: code points are bounded while every candidate URL is schema-validated without scheme filtering.
+    expect(
+      actual.map(({ track, score }) => [track.id, track.title, track.artworkUrl, score]),
+    ).toEqual([
+      ["astral-513-utf16", astral513Utf16, "ftp://images.example/cover", 1],
+      ["combining-512-code-points", combining512CodePoints, "data:text/plain,cover", 0.9],
+    ])
+    expect(
+      parseYouTubeSearchResponse({
+        contents: [renderer("null-thumbnail", "Title", [{ url: null }])],
+      }),
+    ).toEqual([])
+  })
 })

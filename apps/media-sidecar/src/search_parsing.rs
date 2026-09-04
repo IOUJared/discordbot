@@ -100,11 +100,16 @@ fn normalize_renderer(value: &Value, ordinal: usize) -> Option<SearchResult> {
     let title = concatenate_runs(&renderer.title)?;
     let artist = concatenate_runs(&renderer.owner_text)?;
     let duration_ms = parse_duration_ms(&renderer.length_text.simple_text)?;
-    let artwork_url = renderer.thumbnail.thumbnails.last()?.url.clone();
-    let artwork = Url::parse(&artwork_url).ok()?;
-    if !matches!(artwork.scheme(), "http" | "https") {
+    if renderer.thumbnail.thumbnails.is_empty()
+        || renderer
+            .thumbnail
+            .thumbnails
+            .iter()
+            .any(|thumbnail| Url::parse(&thumbnail.url).is_err())
+    {
         return None;
     }
+    let artwork_url = renderer.thumbnail.thumbnails.last()?.url.clone();
     Some(SearchResult {
         track: Track {
             url: format!("https://www.youtube.com/watch?v={}", renderer.video_id),
@@ -130,7 +135,7 @@ fn concatenate_runs(text: &TextRuns) -> Option<String> {
         .map(|run| run.text.as_str())
         .collect::<String>();
     let text = text.trim_matches(is_ecmascript_whitespace);
-    if text.is_empty() || text.encode_utf16().count() > 512 {
+    if text.is_empty() || text.chars().count() > 512 {
         return None;
     }
     Some(text.to_owned())

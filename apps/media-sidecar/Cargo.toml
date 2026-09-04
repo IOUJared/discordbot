@@ -23,6 +23,11 @@ path = "tests/search.rs"
 required-features = ["test-upstream"]
 
 [[test]]
+name = "search_parity"
+path = "tests/search_parity.rs"
+required-features = ["test-upstream"]
+
+[[test]]
 name = "search_benchmark"
 path = "tests/search_benchmark.rs"
 required-features = ["test-upstream"]

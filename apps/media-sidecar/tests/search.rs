@@ -168,8 +168,8 @@ async fn slot_four_is_included_and_slot_five_is_excluded() {
 
 #[tokio::test]
 async fn padded_text_matches_node_track_normalization() {
-    // Given: ECMAScript-trimmable edge whitespace, empty-after-trim, and overlong UTF-16 slots.
-    let overlong_title = "😀".repeat(256) + "a";
+    // Given: ECMAScript-trimmable edge whitespace, empty-after-trim, and an overlong code-point slot.
+    let overlong_title = "😀".repeat(513);
     let response = run_custom_search(vec![
         renderer_with_text(
             "padded-0",
