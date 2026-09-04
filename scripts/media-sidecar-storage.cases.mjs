@@ -20,9 +20,13 @@ test("terminal space cleanup preserves tagged and digest-pinned images and never
   assert.match(owner, /RepoTags/u)
   assert.match(owner, /RepoDigests/u)
   assert.match(owner, /terminalLeaseUnchanged:true/u)
-  assert.match(owner, /docker builder prune --filter until=1h --force/u)
+  assert.match(owner, /docker builder prune --filter until=0s --force/u)
   assert.doesNotMatch(owner, /docker (?:system|image|volume) prune/u)
-  assert.doesNotMatch(owner, /docker builder prune(?! --filter until=1h --force)/u)
+  assert.doesNotMatch(owner, /docker builder prune(?! --filter until=0s --force)/u)
+  assert.match(owner, /qa_ref="discord-music-media-sidecar:qa-\$selected_sha"/u)
+  assert.match(owner, /temporaryQaImageRemoved/u)
+  assert.match(owner, /cache-cleanup-qa-project/u)
+  assert.match(owner, /cache-cleanup-qa-revision/u)
 })
 
 test("terminal build-cache cleanup rejects active builds and preserves image and volume identity", () => {
@@ -61,7 +65,7 @@ docker_volume_identity() { printf 'same-volumes\\n'; }
 ps() { test "\${FAKE_ACTIVE:-0}" = 1 && printf 'docker build /source\\n' || :; }
 df() { printf 'Filesystem 1M-blocks Used Available Capacity Mounted\\n/dev/test 9000 4000 4096 50%% /\\n'; }
 docker() {
-  test "$*" = 'builder prune --filter until=1h --force'
+  test "$*" = 'builder prune --filter until=0s --force'
   : >${JSON.stringify(marker)}
 }
 ${definition}
@@ -79,7 +83,8 @@ cleanup_terminal_build_cache ${JSON.stringify(runId)} ${JSON.stringify(sha)}
 
     const idle = spawnSync("bash", ["-s"], { input: probe, encoding: "utf8" })
     assert.equal(idle.status, 0, idle.stderr)
-    assert.match(idle.stdout, /"filter":"until=1h"/u)
+    assert.match(idle.stdout, /"filter":"until=0s"/u)
+    assert.match(idle.stdout, /"temporaryQaImageRemoved":0/u)
     assert.match(idle.stdout, /"imagesUnchanged":true,"volumesUnchanged":true/u)
     assert.equal(readFileSync(marker, "utf8"), "")
   } finally {

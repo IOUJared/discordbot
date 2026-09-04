@@ -611,8 +611,10 @@ repair_terminal_retention() {
   jq -cn --argjson repaired "$repaired" '{ok:true,terminalLeaseUnchanged:true,rollbackTagsRepaired:$repaired,volumesRemoved:0}'
 }
 docker_image_identity() {
+  local excluded="${1:-}"
   while read -r image; do
     test -n "$image" || continue
+    test "$image" != "$excluded" || continue
     docker image inspect -f '{{.Id}} {{json .RepoDigests}}' "$image"
   done < <(docker images -q --no-trunc | sort -u)
 }
@@ -623,23 +625,32 @@ docker_volume_identity() {
   done < <(docker volume ls -q | sort -u)
 }
 cleanup_terminal_build_cache() {
-  local run_id="$1" selected_sha="$2" config images_before images_after volumes_before volumes_after state_before state_after before after
+  local run_id="$1" selected_sha="$2" config qa_ref qa_id qa_project qa_revision qa_removed images_before images_after volumes_before volumes_after state_before state_after before after
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
   test "$(lease_value .state)" = committed || { test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cache-cleanup-state; }
   jq -e '.activeMutation==null and (.acceptedOperations|all(.status!="accepted"))' "$MS_LEASE" >/dev/null || die cache-cleanup-operation-active
   ps -eo args= | grep -E '(^|[ /])(docker|buildctl|buildx)[^[:cntrl:]]* (build|bake)( |$)' >/dev/null && die cache-cleanup-build-active
-  config="$(active_config)"; images_before="$(docker_image_identity | sort | sha256sum | cut -d' ' -f1)"; volumes_before="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
+  config="$(active_config)"; qa_ref="discord-music-media-sidecar:qa-$selected_sha"; qa_id="$(docker image inspect -f '{{.Id}}' "$qa_ref" 2>/dev/null || true)"; qa_removed=0
+  if test -n "$qa_id"; then
+    qa_project="$(docker image inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$qa_ref")"
+    qa_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$qa_ref")"
+    test "$qa_project" = "discord-music-sidecar-${selected_sha:0:12}" || die cache-cleanup-qa-project
+    test "$qa_revision" = "$selected_sha" || die cache-cleanup-qa-revision
+    docker ps -aq | grep -Fxq "$qa_id" && die cache-cleanup-qa-in-use || true
+  fi
+  images_before="$(docker_image_identity "$qa_id" | sort | sha256sum | cut -d' ' -f1)"; volumes_before="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
   state_before="$(state_fingerprint "$config")"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
-  docker builder prune --filter until=1h --force >/dev/null
-  images_after="$(docker_image_identity | sort | sha256sum | cut -d' ' -f1)"; volumes_after="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
+  if test -n "$qa_id"; then docker image rm "$qa_ref" >/dev/null; qa_removed=1; fi
+  docker builder prune --filter until=0s --force >/dev/null
+  images_after="$(docker_image_identity "$qa_id" | sort | sha256sum | cut -d' ' -f1)"; volumes_after="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
   state_after="$(state_fingerprint "$config")"; after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
   test "$images_before" = "$images_after" || die cache-cleanup-images-changed
   test "$volumes_before" = "$volumes_after" || die cache-cleanup-volumes-changed
   test "$state_before" = "$state_after" || die cache-cleanup-state-changed
   test "$after" -ge 2048 || die cache-cleanup-capacity
-  jq -cn --argjson before "$before" --argjson after "$after" '{ok:true,terminalLeaseUnchanged:true,filter:"until=1h",imagesUnchanged:true,volumesUnchanged:true,liveStateUnchanged:true,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
+  jq -cn --argjson before "$before" --argjson after "$after" --argjson qaRemoved "$qa_removed" '{ok:true,terminalLeaseUnchanged:true,filter:"until=0s",temporaryQaImageRemoved:$qaRemoved,imagesUnchanged:true,volumesUnchanged:true,liveStateUnchanged:true,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
 commit_run() {
   local run_id="$1" expected="$2" next run manifest config cursor events_until observed quiet_since quiet_until quiet_events sample1 sample2 stable_at
