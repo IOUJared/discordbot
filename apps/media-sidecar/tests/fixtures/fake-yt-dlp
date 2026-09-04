@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+last=""
+for argument in "$@"; do
+  last="$argument"
+done
+track_id="${last##*=}"
+record="/tmp/discord-music-sidecar-${track_id}"
+printf '%s\n' "$@" > "${record}.argv"
+/usr/bin/tr '\000' '\n' < "/proc/$$/environ" | /usr/bin/sort > "${record}.env"
+
+fixture_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../../../../spec/media-sidecar/v1/raw" && pwd)
+case "$track_id" in
+  valid-ordinal-1) /bin/cat "$fixture_dir/ytdlp-resolve-valid.json" ;;
+  argv-fixed)
+    printf '{"url":"https://rr1---fixture.googlevideo.com/videoplayback?id=argv-fixed","http_headers":{},"ext":"webm","acodec":"opus","protocol":"https"}\n'
+    ;;
+  manifest-host) /bin/cat "$fixture_dir/ytdlp-resolve-host-header.json" ;;
+  manifest-protocol) /bin/cat "$fixture_dir/ytdlp-resolve-manifest-protocol.json" ;;
+  manifest-malformed) /bin/cat "$fixture_dir/ytdlp-resolve-malformed.json" ;;
+  manifest-invalid-json) /bin/cat "$fixture_dir/ytdlp-resolve-invalid-json.txt" ;;
+  tree-*)
+    /bin/sleep 300 &
+    grandchild=$!
+    printf '%s %s\n' "$$" "$grandchild" > "${record}.pids"
+    wait "$grandchild"
+    ;;
+  proxy-direct-*)
+    ports="${track_id##proxy-direct-}"
+    port="${ports%%-*}"
+    proxy_port="${ports##*-}"
+    proxy_url="http://127.0.0.1:${proxy_port}"
+    export HTTP_PROXY="$proxy_url" HTTPS_PROXY="$proxy_url" ALL_PROXY="$proxy_url" NO_PROXY=""
+    export http_proxy="$proxy_url" https_proxy="$proxy_url" all_proxy="$proxy_url" no_proxy=""
+    proxy_is_empty=false
+    previous=""
+    for argument in "$@"; do
+      if [ "$previous" = "--proxy" ] && [ -z "$argument" ]; then
+        proxy_is_empty=true
+      fi
+      previous="$argument"
+    done
+    if [ "$proxy_is_empty" = true ]; then
+      /usr/bin/curl --fail --silent --show-error --noproxy '*' "http://127.0.0.1:${port}/"
+    else
+      /usr/bin/curl --fail --silent --show-error "http://127.0.0.1:${port}/"
+    fi
+    printf '{"url":"https://rr1---fixture.googlevideo.com/videoplayback?id=%s","http_headers":{},"ext":"webm","acodec":"opus","protocol":"https"}\n' "$track_id"
+    ;;
+  oversized)
+    /usr/bin/head -c 4194305 /dev/zero | /usr/bin/tr '\000' x
+    ;;
+  stderr-oversized)
+    /usr/bin/head -c 65537 /dev/zero | /usr/bin/tr '\000' x >&2
+    ;;
+  *) exit 23 ;;
+esac
