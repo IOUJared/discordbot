@@ -31,7 +31,7 @@ test("terminal space cleanup preserves tagged and digest-pinned images and never
 
 test("terminal build-cache cleanup rejects active builds and preserves image and volume identity", () => {
   const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
-  const start = owner.indexOf("cleanup_terminal_build_cache() {")
+  const start = owner.indexOf("qa_image_in_use() {")
   const definition = owner.slice(start, owner.indexOf("commit_run() {", start))
   const fixture = mkdtempSync(join(tmpdir(), "media-build-cache-cleanup-"))
   const lease = join(fixture, "lease.json")

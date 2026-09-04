@@ -6,6 +6,7 @@ import "./media-sidecar-inspection.cases.mjs"
 import "./media-sidecar-lease.cases.mjs"
 import "./media-sidecar-remote-rollback.cases.mjs"
 import "./media-sidecar-storage.cases.mjs"
+import "./media-sidecar-storage-guards.cases.mjs"
 import { redactRunId } from "./media-sidecar-remote-client.mjs"
 import { validateObservation } from "./media-sidecar-run-model.mjs"
 

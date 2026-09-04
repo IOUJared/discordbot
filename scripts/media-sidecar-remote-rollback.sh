@@ -624,6 +624,16 @@ docker_volume_identity() {
     docker volume inspect -f '{{.Name}} {{.Driver}} {{.Mountpoint}} {{json .Labels}} {{json .Options}} {{.Scope}}' "$volume"
   done < <(docker volume ls -q | sort -u)
 }
+qa_image_in_use() {
+  local image_id="$1" containers container observed
+  containers="$(docker ps -aq)" || die cache-cleanup-container-list
+  while IFS= read -r container; do
+    test -n "$container" || continue
+    observed="$(docker inspect -f '{{.Image}}' "$container")" || die cache-cleanup-container-inspect
+    test "$observed" = "$image_id" && return 0
+  done <<<"$containers"
+  return 1
+}
 cleanup_terminal_build_cache() {
   local run_id="$1" selected_sha="$2" config qa_ref qa_id qa_project qa_revision qa_removed images_before images_after volumes_before volumes_after state_before state_after before after
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
@@ -636,9 +646,9 @@ cleanup_terminal_build_cache() {
   if test -n "$qa_id"; then
     qa_project="$(docker image inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$qa_ref")"
     qa_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$qa_ref")"
-    test "$qa_project" = "discord-music-sidecar-${selected_sha:0:12}" || die cache-cleanup-qa-project
+    test "$qa_project" = "discord-music-sidecar-qa-${selected_sha:0:12}" || die cache-cleanup-qa-project
     test "$qa_revision" = "$selected_sha" || die cache-cleanup-qa-revision
-    docker ps -aq | grep -Fxq "$qa_id" && die cache-cleanup-qa-in-use || true
+    qa_image_in_use "$qa_id" && die cache-cleanup-qa-in-use || true
   fi
   images_before="$(docker_image_identity "$qa_id" | sort | sha256sum | cut -d' ' -f1)"; volumes_before="$(docker_volume_identity | sort | sha256sum | cut -d' ' -f1)"
   state_before="$(state_fingerprint "$config")"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
