@@ -39,8 +39,9 @@ test "$(/usr/local/bin/yt-dlp --version)" = 2026.08.19
   exit 0
 fi
 work="$REMOTE_ROOT/$CHECKPOINT_SHA"; source="$work/source"; raw="$work/raw.log"
+four_latched=not-run; deno_latched=not-run; environment_observed=not-run
 cleanup() { cd /; CHECKPOINT_SHA="$CHECKPOINT_SHA" CHECKPOINT_TREE="$CHECKPOINT_TREE" docker compose -p "$PROJECT" -f "$source/$COMPOSE" down --remove-orphans --volumes >"$raw" 2>&1 || true; rm -rf -- "$work"; printf 'cleanup=true\n'; }
-failure() { printf 'failure_stage=%s\n' "$stage"; }
+failure() { printf 'failure_stage=%s\nfour_latched=%s\ndeno_latched=%s\nenvironment_observed=%s\n' "$stage" "$four_latched" "$deno_latched" "$environment_observed"; }
 trap cleanup EXIT
 trap failure ERR
 stage=clone
@@ -96,6 +97,7 @@ if test "$VERIFY_MODE" = smoke; then
 fi
 if test "$VERIFY_MODE" = drain; then
   stage=saturation-observation
+  four_latched=false; deno_latched=false; environment_observed=false
   docker exec -d "$sidecar" sh -ceu '
 rm -f /tmp/qa-deno-observed /tmp/qa-four-observed
 for attempt in $(seq 1 20000); do
@@ -119,13 +121,15 @@ exit 1'
   for attempt in $(seq 1 100); do
     count="$(docker exec "$sidecar" sh -ceu 'count=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; esac; done; printf "%s" "$count"')"
     docker exec "$sidecar" cat /tmp/qa-pids >"$work/children"
-    test "$count" -eq 4 && observed=true
+    test "$count" -eq 4 && { observed=true; environment_observed=true; }
     $observed && docker exec "$sidecar" test -f /tmp/qa-deno-observed && break
     sleep 0.1
   done
+  docker exec "$sidecar" test -f /tmp/qa-four-observed && four_latched=true
+  docker exec "$sidecar" test -f /tmp/qa-deno-observed && deno_latched=true
   $observed
-  docker exec "$sidecar" test -f /tmp/qa-four-observed
-  docker exec "$sidecar" test -f /tmp/qa-deno-observed
+  $four_latched
+  $deno_latched
   stage=host-process-snapshot
   docker top "$sidecar" -eo pid,stat,comm | awk 'NR > 1 { if ($2 ~ /^Z/) exit 1; print $1 }' >"$work/host-pids"
   while read -r pid; do test -r "/proc/$pid/stat"; printf '%s:%s\n' "$pid" "$(awk '{print $22}' "/proc/$pid/stat")"; done <"$work/host-pids" >"$work/host-processes"
