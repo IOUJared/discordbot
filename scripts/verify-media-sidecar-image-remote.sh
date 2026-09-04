@@ -50,10 +50,13 @@ git -C "$source" checkout --quiet --detach "$CHECKPOINT_SHA" >>"$raw" 2>&1
 test "$(git -C "$source" rev-parse HEAD)" = "$CHECKPOINT_SHA"
 test "$(git -C "$source" rev-parse 'HEAD^{tree}')" = "$CHECKPOINT_TREE"
 test -z "$(git -C "$source" status --porcelain)"
-cd "$source"; export CHECKPOINT_SHA CHECKPOINT_TREE; stage=compose-schema
+cd "$source"; export CHECKPOINT_SHA CHECKPOINT_TREE; stage=compose-services
 test "$(docker compose -p "$PROJECT" -f "$COMPOSE" config --services | paste -sd, -)" = media-sidecar,probe
+stage=compose-images
 test "$(docker compose -p "$PROJECT" -f "$COMPOSE" config --images | sort | paste -sd, -)" = "discord-music-media-sidecar:qa-$CHECKPOINT_SHA,discord-music-node:qa-$CHECKPOINT_SHA"
+stage=compose-render
 docker compose -p "$PROJECT" -f "$COMPOSE" config >"$raw" 2>&1
+stage=compose-denylist
 ! grep -Eq '^[[:space:]]+(ports|volumes|env_file|secrets|configs):|external:[[:space:]]*true' "$raw"
 stage=context-clean
 mkdir "$work/context"
