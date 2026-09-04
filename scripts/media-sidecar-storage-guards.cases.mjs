@@ -17,6 +17,8 @@ test("terminal build-cache cleanup resolves QA image use and validates identity 
   const sha = "b".repeat(40)
   const qaRef = `discord-music-media-sidecar:qa-${sha}`
   const qaProject = `discord-music-sidecar-qa-${sha.slice(0, 12)}`
+  const qaImageId = `sha256:${"a".repeat(64)}`
+  const otherImageId = `sha256:${"c".repeat(64)}`
   writeFileSync(
     lease,
     JSON.stringify({
@@ -45,7 +47,7 @@ df() { printf 'Filesystem 1M-blocks Used Available Capacity Mounted\\n/dev/test 
 docker() {
   if test "\${1:-}" = image && test "\${2:-}" = inspect; then
     case "\${4:-}" in
-      '{{.Id}}') test "\${5:-}" = '${qaRef}' && printf 'sha256:qa-image\\n' ;;
+      '{{.Id}}') test "\${5:-}" = '${qaRef}' && printf '%s\\n' '${qaImageId}' ;;
       *com.docker.compose.project*) test "\${5:-}" = '${qaRef}' && printf '%s\\n' "\${QA_PROJECT}" ;;
       *org.opencontainers.image.revision*) test "\${5:-}" = '${qaRef}' && printf '%s\\n' "\${QA_REVISION}" ;;
       *) exit 1 ;;
@@ -54,7 +56,17 @@ docker() {
   fi
   case "$*" in
     'ps -aq') test "\${QA_IN_USE:-0}" = 1 && printf 'container-1\\n' || : ;;
-    'inspect -f {{.Image}} container-1') printf '%s\\n' "\${QA_CONTAINER_IMAGE:-sha256:other-image}" ;;
+    'inspect -f {{.Image}} container-1')
+      case "\${QA_INSPECT_MODE:-valid}" in
+        empty) printf '\\n' ;;
+        whitespace) printf ' %s \\n' '${qaImageId}' ;;
+        multiline) printf '%s\\n%s\\n' '${qaImageId}' '${otherImageId}' ;;
+        malformed) printf 'not-an-image-id\\n' ;;
+        noncanonical) printf 'sha256:short\\n' ;;
+        inspect-fail) return 1 ;;
+        running|stopped) printf '%s\\n' '${qaImageId}' ;;
+        *) printf '%s\\n' '${otherImageId}' ;;
+      esac ;;
     'image rm ${qaRef}') : >${JSON.stringify(marker)} ;;
     'builder prune --filter until=0s --force') : ;;
     *) exit 1 ;;
@@ -71,25 +83,48 @@ cleanup_terminal_build_cache ${JSON.stringify(runId)} ${JSON.stringify(sha)}
         ...process.env,
         QA_PROJECT: scenario === "wrong-project" ? "wrong-project" : qaProject,
         QA_REVISION: scenario === "wrong-revision" ? "c".repeat(40) : sha,
-        QA_IN_USE: scenario === "running" || scenario === "stopped" ? "1" : "0",
-        QA_CONTAINER_IMAGE:
-          scenario === "running" || scenario === "stopped"
-            ? "sha256:qa-image"
-            : "sha256:other-image",
+        QA_IN_USE: [
+          "running",
+          "stopped",
+          "empty",
+          "whitespace",
+          "multiline",
+          "malformed",
+          "noncanonical",
+          "inspect-fail",
+        ].includes(scenario)
+          ? "1"
+          : "0",
+        QA_INSPECT_MODE: scenario,
       },
     })
   try {
-    for (const scenario of ["running", "stopped", "wrong-project", "wrong-revision"]) {
+    for (const scenario of [
+      "running",
+      "stopped",
+      "empty",
+      "whitespace",
+      "multiline",
+      "malformed",
+      "noncanonical",
+      "inspect-fail",
+      "wrong-project",
+      "wrong-revision",
+    ]) {
       const result = run(scenario)
-      assert.equal(result.status, 1, scenario)
+      assert.equal(result.status, 1, `${scenario}: ${result.stdout}${result.stderr}`)
       assert.match(
         result.stderr,
         new RegExp(
-          scenario === "wrong-project"
-            ? "cache-cleanup-qa-project"
-            : scenario === "wrong-revision"
-              ? "cache-cleanup-qa-revision"
-              : "cache-cleanup-qa-in-use",
+          scenario === "inspect-fail"
+            ? "cache-cleanup-container-inspect"
+            : ["empty", "whitespace", "multiline", "malformed", "noncanonical"].includes(scenario)
+              ? "cache-cleanup-container-image"
+              : scenario === "wrong-project"
+                ? "cache-cleanup-qa-project"
+                : scenario === "wrong-revision"
+                  ? "cache-cleanup-qa-revision"
+                  : "cache-cleanup-qa-in-use",
         ),
       )
       assert.equal(existsSync(marker), false, scenario)

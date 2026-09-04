@@ -626,10 +626,12 @@ docker_volume_identity() {
 }
 qa_image_in_use() {
   local image_id="$1" containers container observed
+  [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || die cache-cleanup-image-id
   containers="$(docker ps -aq)" || die cache-cleanup-container-list
   while IFS= read -r container; do
     test -n "$container" || continue
     observed="$(docker inspect -f '{{.Image}}' "$container")" || die cache-cleanup-container-inspect
+    [[ "$observed" =~ ^sha256:[0-9a-f]{64}$ ]] || die cache-cleanup-container-image
     test "$observed" = "$image_id" && return 0
   done <<<"$containers"
   return 1
