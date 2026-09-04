@@ -13,7 +13,7 @@ services:
     expose:
       - "3101"
     healthcheck:
-      test: ["CMD", "deno", "eval", "--allow-net=127.0.0.1:3101", "const r=await fetch('http://127.0.0.1:3101/healthz');if(r.status!==200)Deno.exit(1)"]
+      test: ["CMD", "deno", "eval", "const r=await fetch('http://127.0.0.1:3101/healthz');if(r.status!==200)Deno.exit(1)"]
       interval: 2s
       timeout: 2s
       retries: 15

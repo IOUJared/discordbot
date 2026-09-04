@@ -119,6 +119,10 @@ function localVerify(values) {
       production.includes("MEDIA_SIDECAR_URL: http://media-sidecar:3101"),
     "static-private-wiring",
   )
+  assertText(
+    !compose.includes("--allow-net") && !production.includes("--allow-net"),
+    "static-deno-health",
+  )
   const sidecarService = production.split("\n  media-sidecar:")[1]?.split("\n  dashboard:")[0] ?? ""
   assertText(
     sidecarService.includes('expose:\n      - "3101"') && !/^\s+ports:/mu.test(sidecarService),
