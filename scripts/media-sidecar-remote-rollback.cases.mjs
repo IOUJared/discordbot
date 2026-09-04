@@ -34,6 +34,8 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "healthStatus",
     "searchStatus",
     "dnsCount",
+    "mismatchFirst",
+    "mismatchSecond",
     "condition: service_healthy",
     "links: [media-sidecar]",
     "restore-first-sample",

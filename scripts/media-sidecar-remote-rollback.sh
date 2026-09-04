@@ -264,7 +264,7 @@ YAML
     benchmark-live|benchmark-fallback|benchmark-disabled|benchmark-fresh)
       local kind="${operation#benchmark-}" raw="$run/benchmark-$sequence.private.json" safe="$run/benchmark-$sequence.result.json" rustlog="$run/benchmark-$sequence.rust.jsonl" since result correlations rust_success upstream_success probe node_probe
       probe='{"healthStatus":0,"searchStatus":0,"resultCount":0}'
-      node_probe='{"dnsCount":0,"healthStatus":0,"searchStatus":0,"resultCount":0,"failure":"not_run"}'
+      node_probe='{"dnsCount":0,"healthStatus":0,"searchStatus":0,"resultCount":0,"failure":"not_run","mismatchFirst":0,"paired":0,"mismatchSecond":0}'
       if test "$kind" = live; then
         probe="$(docker exec "${MS_PROJECT}-media-sidecar-1" deno eval '
           const health = await fetch("http://127.0.0.1:3101/healthz")
@@ -279,6 +279,14 @@ YAML
         probe="$(jq -ce '{healthStatus,searchStatus,resultCount}' <<<"$probe")"
         node_probe="$(docker exec discord-music node --input-type=module -e '
           let dnsCount=0, healthStatus=0, searchStatus=0, resultCount=0, failure="none"
+          const {Agent,fetch:undiciFetch}=await import("undici")
+          async function agentStatus(fetcher) {
+            const dispatcher=new Agent({connections:1})
+            try { return (await fetcher("http://media-sidecar:3101/healthz",{dispatcher,signal:AbortSignal.timeout(5000)})).status } catch { return 0 } finally { await dispatcher.close() }
+          }
+          const mismatchFirst=await agentStatus(globalThis.fetch)
+          const paired=await agentStatus(undiciFetch)
+          const mismatchSecond=await agentStatus(globalThis.fetch)
           try { dnsCount=(await import("node:dns/promises")).resolve4("media-sidecar").then((items)=>items.length).catch(()=>0); dnsCount=await dnsCount } catch { failure="dns" }
           try {
             const health=await fetch("http://media-sidecar:3101/healthz",{signal:AbortSignal.timeout(5000)})
@@ -288,9 +296,9 @@ YAML
             const body=await search.json().catch(()=>({}))
             resultCount=Array.isArray(body.results)?body.results.length:0
           } catch { failure="transport" }
-          console.log(JSON.stringify({dnsCount,healthStatus,searchStatus,resultCount,failure}))
+          console.log(JSON.stringify({dnsCount,healthStatus,searchStatus,resultCount,failure,mismatchFirst,paired,mismatchSecond,proxyEnvPresent:Boolean(process.env.HTTP_PROXY||process.env.HTTPS_PROXY||process.env.ALL_PROXY),nodeUseEnvProxy:process.env.NODE_USE_ENV_PROXY==="1",modeIsRust:process.env.MEDIA_SIDECAR_MODE==="rust",urlMatches:process.env.MEDIA_SIDECAR_URL==="http://media-sidecar:3101"}))
         ')"
-        node_probe="$(jq -ce '{dnsCount,healthStatus,searchStatus,resultCount,failure}' <<<"$node_probe")"
+        node_probe="$(jq -ce '{dnsCount,healthStatus,searchStatus,resultCount,failure,mismatchFirst,paired,mismatchSecond,proxyEnvPresent,nodeUseEnvProxy,modeIsRust,urlMatches}' <<<"$node_probe")"
       fi
       since="$(date --iso-8601=seconds)"
       docker exec -i -e "MEDIA_BENCH_KIND=$kind" -e "MEDIA_BENCH_RUN=$run_id" discord-music node --input-type=module - >"$raw"
