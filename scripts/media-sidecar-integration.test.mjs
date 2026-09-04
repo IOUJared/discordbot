@@ -212,6 +212,11 @@ test("repository lint excludes generated Rust output and the hash-locked raw cor
   assert.ok(config.files.includes.includes("!spec/media-sidecar/v1"))
 })
 
+test("server image makes the Corepack node-gyp launcher executable", () => {
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8")
+  assert.match(dockerfile, /pnpm --version[\s\S]+node-gyp\/gyp\/gyp_main\.py[\s\S]+chmod 0755/u)
+})
+
 test("public integration output never exposes a random run-id suffix", () => {
   assert.equal(redactRunId(`12-${"a".repeat(32)}`), "12-<redacted>")
 })

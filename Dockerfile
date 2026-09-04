@@ -3,6 +3,10 @@ RUN apk add --no-cache g++ make python3
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml biome.json ./
+RUN pnpm --version \
+    && gyp_main="$(find /root/.cache/node/corepack -type f -path '*/node-gyp/gyp/gyp_main.py' -print -quit)" \
+    && test -n "$gyp_main" \
+    && chmod 0755 "$gyp_main"
 COPY apps/server/package.json apps/server/package.json
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
