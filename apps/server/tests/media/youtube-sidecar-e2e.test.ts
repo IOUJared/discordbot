@@ -224,6 +224,7 @@ describe("Node media sidecar runtime", () => {
         )
       }),
     ])
+    await runtime.started
 
     // When: both public response sockets disconnect.
     first.destroy()

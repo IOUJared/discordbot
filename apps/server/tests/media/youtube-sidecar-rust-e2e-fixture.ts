@@ -61,7 +61,11 @@ export function rustStages(events: readonly unknown[]): string[] {
   )
 }
 
-function recordRustEvents(events: unknown[], drained: Deferred<void>): (chunk: Buffer) => void {
+function recordRustEvents(
+  events: unknown[],
+  started: Deferred<void>,
+  drained: Deferred<void>,
+): (chunk: Buffer) => void {
   let pending = ""
   return (chunk) => {
     const lines = `${pending}${chunk.toString("utf8")}`.split("\n")
@@ -81,6 +85,15 @@ function recordRustEvents(events: unknown[], drained: Deferred<void>): (chunk: B
         ) {
           const event: unknown = JSON.parse(outer.fields.observation)
           events.push(event)
+          if (
+            typeof event === "object" &&
+            event !== null &&
+            "stage" in event &&
+            event.stage === "registry" &&
+            "counterDelta" in event &&
+            event.counterDelta === 1
+          )
+            started.resolve()
           if (
             typeof event === "object" &&
             event !== null &&
@@ -112,6 +125,7 @@ async function freePort(): Promise<number> {
 export async function startRustSearchApp(events: SidecarRuntimeObservation[]): Promise<{
   readonly app: FastifyInstance
   readonly address: string
+  readonly started: Promise<void>
   readonly drained: Promise<void>
   readonly localCalls: () => number
   readonly nodeEvents: () => readonly NodeObservation[]
@@ -139,14 +153,15 @@ export async function startRustSearchApp(events: SidecarRuntimeObservation[]): P
       stdio: ["ignore", "pipe", "pipe"],
     },
   )
+  const started = deferred<void>()
   const drained = deferred<void>()
   const rustEvents: unknown[] = []
   const nodeEvents: NodeObservation[] = []
   const recordNodeEvent = (event: NodeObservation): void => {
     nodeEvents.push(event)
   }
-  harness.stdout?.on("data", recordRustEvents(rustEvents, drained))
-  harness.stderr?.on("data", recordRustEvents(rustEvents, drained))
+  harness.stdout?.on("data", recordRustEvents(rustEvents, started, drained))
+  harness.stderr?.on("data", recordRustEvents(rustEvents, started, drained))
   const client = new YouTubeSidecarClient({
     baseUrl: `http://127.0.0.1:${port}`,
     observe: recordNodeEvent,
@@ -200,6 +215,7 @@ export async function startRustSearchApp(events: SidecarRuntimeObservation[]): P
   })
   return {
     ...runtime,
+    started: started.promise,
     drained: drained.promise,
     localCalls: () => localCalls,
     nodeEvents: () => nodeEvents,
