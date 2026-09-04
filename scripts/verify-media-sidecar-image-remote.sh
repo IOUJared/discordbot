@@ -116,18 +116,20 @@ while kill -0 "$challenge" 2>/dev/null; do
       deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) : >/tmp/qa-deno-observed; exit 0;; esac;;
     esac
   done
-done
+  done
 ' >/dev/null 2>&1 & challenge_client=$!
   for attempt in $(seq 1 100); do docker exec "$sidecar" test -f /tmp/qa-observer-ready && break; sleep 0.01; done
   docker exec "$sidecar" test -f /tmp/qa-observer-ready
-  docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
   docker exec "$sidecar" sh -c ': >/tmp/qa-challenge-start'
+  for attempt in $(seq 1 100); do docker exec "$sidecar" test -f /tmp/qa-deno-observed && { deno_latched=true; break; }; sleep 0.1; done
+  $deno_latched
+  docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
   observed=false; : >"$work/children"
   for attempt in $(seq 1 100); do
     count="$(docker exec "$sidecar" sh -ceu 'count=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) tr "\0" "\n" <"$p/cmdline" | grep -Fx -- --print >/dev/null || continue; keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; esac; done; printf "%s" "$count"')"
     docker exec "$sidecar" cat /tmp/qa-pids >"$work/children"
     test "$count" -eq 4 && { observed=true; four_latched=true; environment_observed=true; }
-    $observed && docker exec "$sidecar" test -f /tmp/qa-deno-observed && break
+    $observed && break
     sleep 0.1
   done
   docker exec "$sidecar" test -f /tmp/qa-deno-observed && deno_latched=true
