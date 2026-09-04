@@ -184,6 +184,10 @@ function deploy({ client, values, sha, kind }) {
     const fresh = mutate(deployment, "benchmark-fresh", BENCHMARK_SOURCE, 60_000)
     assertValue(fresh.durationMs < 1_000 && fresh.internalState === "ready", "final-ready")
     const committed = client.commit(sha, deployment.runId, deployment.sequence)
+    assertValue(
+      committed.eventProof?.retained === true && committed.eventProof.quietWindowEvents === 0,
+      "commit-event-proof",
+    )
     return {
       ok: true,
       kind,
@@ -204,6 +208,7 @@ function deploy({ client, values, sha, kind }) {
       stableSamples: 2,
       dbVolumesPreserved: true,
       leaseSequence: committed.sequence,
+      eventProof: committed.eventProof,
     }
   } catch (error) {
     recoverFailure(client, deployment)

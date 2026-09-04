@@ -1,0 +1,40 @@
+services:
+  server:
+    image: discord-music-server:${DEPLOY_SHA:?DEPLOY_SHA is required}
+    container_name: discord-music
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DATABASE_PATH: /data/discord-music.sqlite
+      HOST: 0.0.0.0
+      PORT: 3000
+      MEDIA_SIDECAR_URL: http://media-sidecar:3101
+    ports: ["3000:3000"]
+    volumes:
+      - discord-music-data:/data
+      - /opt/discord-music-secrets:/run/secrets/discord-music
+    depends_on:
+      media-sidecar:
+        condition: service_healthy
+    links: [media-sidecar]
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+  media-sidecar:
+    image: discord-music-media-sidecar:${DEPLOY_SHA:?DEPLOY_SHA is required}
+    restart: unless-stopped
+    environment: {SIDECAR_HOST: 0.0.0.0, SIDECAR_PORT: 3101}
+    expose: ["3101"]
+    healthcheck:
+      test: ["CMD", "deno", "eval", "const r=await fetch('http://127.0.0.1:3101/healthz');if(r.status!==200)Deno.exit(1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+volumes:
+  discord-music-data:
+    external: true
+    name: deploy_discord-music-data

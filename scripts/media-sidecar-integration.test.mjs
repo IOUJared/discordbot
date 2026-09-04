@@ -49,10 +49,29 @@ test("disk recovery removes only inputs for terminal successful operations", () 
 })
 
 test("benchmark results carry the next lease sequence", () => {
-  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
-  assert.match(
-    owner,
-    /tail -1 "\$log" \| jq -ce --argjson sequence "\$next" '\.sequence=\$sequence'/u,
+  const instance = model()
+  const run = active(instance)
+  const benchmark = instance.mutate({
+    runId: run.runId,
+    sequence: run.sequence,
+    operation: "benchmark-live",
+  })
+  const next = instance.mutate({
+    runId: run.runId,
+    sequence: benchmark.sequence,
+    operation: "stop-sidecar",
+  })
+  assert.equal(benchmark.sequence, run.sequence + 1)
+  assert.equal(next.sequence, benchmark.sequence + 1)
+  assert.equal(instance.lease.sequence, next.sequence)
+  assert.throws(
+    () =>
+      instance.mutate({
+        runId: run.runId,
+        sequence: run.sequence,
+        operation: "stale-after-benchmark",
+      }),
+    (error) => error instanceof ModelError && error.code === "stale_sequence",
   )
 })
 
@@ -64,6 +83,21 @@ test("preflight is read-only and redacts protected bytes", () => {
   assert.deepEqual(instance.writes, [])
   assert.equal(result.fingerprint, fingerprint(before))
   assert.doesNotMatch(JSON.stringify(result), /SECRET|protected/u)
+})
+
+test("tracked deployment config replaces only checkpointed legacy config", () => {
+  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
+  const compose = readFileSync(new URL("../deploy/compose.yaml", import.meta.url), "utf8")
+  assert.match(compose, /discord-music-server:\$\{DEPLOY_SHA:\?[^}]+\}/u)
+  assert.match(compose, /discord-music-media-sidecar:\$\{DEPLOY_SHA:\?[^}]+\}/u)
+  assert.match(owner, /managedLegacyConfig/u)
+  assert.match(owner, /legacy-active-compose\.yaml/u)
+  assert.match(owner, /git -C "\$MS_REPO" status --porcelain/u)
+  assert.match(
+    owner,
+    /git -C "\$MS_REPO" reset --hard[^\n]+\n    cp "\$run\/compose\.yaml" "\$config"/u,
+  )
+  assert.doesNotMatch(compose, /discord-music-(?:server|media-sidecar):[0-9a-f]{40}/u)
 })
 
 test("begin-run is monotonic, random, archived, and unique by phase", () => {
@@ -141,6 +175,33 @@ test("deadline wins success race and terminal state cannot regress", () => {
   assert.throws(() => instance.commit({ runId: run.runId, sequence: run.sequence }))
   assert.throws(() => instance.expire({ runId: run.runId }))
   assert.equal(instance.writes.length, writes)
+})
+
+test("commit retains quiet daemon event proof and rejects unstable completion", () => {
+  const unstable = model()
+  const unstableRun = active(unstable)
+  assert.throws(
+    () =>
+      unstable.commit({
+        runId: unstableRun.runId,
+        sequence: unstableRun.sequence,
+        quietWindowEvents: 1,
+      }),
+    (error) => error instanceof ModelError && error.code === "daemon_not_quiet",
+  )
+  assert.equal(unstable.lease.state, "active")
+  assert.equal(unstable.lease.eventProof, null)
+
+  const instance = model()
+  const run = active(instance)
+  const committed = instance.commit({ runId: run.runId, sequence: run.sequence })
+  assert.equal(committed.state, "committed")
+  assert.deepEqual(instance.lease.eventProof, {
+    cursor: 1,
+    observedCount: 1,
+    quietWindowEvents: 0,
+    stableAtBoottime: 1_000,
+  })
 })
 
 test("accepted daemon completion after first restore is detected and reconverged", () => {

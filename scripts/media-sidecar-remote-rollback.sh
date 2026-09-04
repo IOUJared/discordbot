@@ -115,19 +115,25 @@ preflight() {
   git -C "$MS_REPO" diff --quiet && git -C "$MS_REPO" diff --cached --quiet || die tracked-tree-dirty
   command -v docker >/dev/null; docker info >/dev/null
   test "$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')" -ge "${MEDIA_MIN_FREE_MIB:-2048}" || die disk-capacity
-  local config status extras lease_state restore_state before after
+  local config config_rel status tracked_clean managed_legacy lease_state restore_state before after
   config="$(active_config)"; test -r "$config"; test -r "$(dirname "$config")/.env"
-  status="$(git -C "$MS_REPO" status --porcelain)"
-  extras="$(printf '%s\n' "$status" | awk '$1=="??" {print $2}' | grep -vFx "${config#"$MS_REPO"/}" || true)"
-  test -z "$extras" || die unexpected-untracked-path
+  config_rel="${config#"$MS_REPO"/}"; test "$config_rel" = deploy/compose.yaml || die compose-path
+  status="$(git -C "$MS_REPO" status --porcelain --untracked-files=all)"
+  tracked_clean=true; managed_legacy=false
+  if test -n "$status"; then
+    test "$status" = "?? $config_rel" || die dirty-tree
+    git -C "$MS_REPO" ls-files --error-unmatch "$config_rel" >/dev/null 2>&1 && die tracked-config-dirty
+    tracked_clean=false; managed_legacy=true
+  fi
   before="$(test -e "$MS_BACKUP" && find "$MS_BACKUP" -maxdepth 2 -printf '%P:%s:%T@\n' | sort | sha256sum | cut -d' ' -f1 || echo absent)"
   lease_state="$(test -r "$MS_LEASE" && jq -er .state "$MS_LEASE" || echo absent)"
   restore_state="$(test -r "$MS_LEASE" && jq -er .restoreState "$MS_LEASE" || echo absent)"
   after="$(test -e "$MS_BACKUP" && find "$MS_BACKUP" -maxdepth 2 -printf '%P:%s:%T@\n' | sort | sha256sum | cut -d' ' -f1 || echo absent)"
   test "$before" = "$after" || die preflight-write
   jq -cn --arg sha "$(git -C "$MS_REPO" rev-parse HEAD)" --arg configHash "$(sha256sum "$config"|cut -d' ' -f1)" \
+    --argjson trackedClean "$tracked_clean" --argjson managedLegacyConfig "$managed_legacy" \
     --arg lease "$lease_state" --arg restore "$restore_state" --arg snapshot "$after" \
-    '{ok:true,readOnly:true,trackedClean:true,protectedConfig:true,sha:$sha,configHash:$configHash,lease:$lease,restoreState:$restore,writeSnapshot:$snapshot}'
+    '{ok:true,readOnly:true,trackedClean:$trackedClean,managedLegacyConfig:$managedLegacyConfig,protectedConfig:true,sha:$sha,configHash:$configHash,lease:$lease,restoreState:$restore,writeSnapshot:$snapshot}'
 }
 begin_run() {
   require_root; require_paths
@@ -196,9 +202,17 @@ perform() {
     receive-bundle) cat >"$run/source.bundle"; chmod 0600 "$run/source.bundle"; sync -f "$run/source.bundle";;
     checkout)
       git -C "$MS_REPO" fetch "$run/source.bundle" "$MS_SHA"
+      git -C "$MS_REPO" fetch origin main
+      test "$(git -C "$MS_REPO" rev-parse origin/main)" = "$MS_SHA"
+      if ! git -C "$MS_REPO" ls-files --error-unmatch "${config#"$MS_REPO"/}" >/dev/null 2>&1; then
+        test "$(sha256sum "$config" | cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")"
+        mv "$config" "$run/legacy-active-compose.yaml"
+        chmod 0600 "$run/legacy-active-compose.yaml"; sync -f "$run/legacy-active-compose.yaml"; sync -f "$run"
+      fi
       git -C "$MS_REPO" merge --ff-only "$MS_SHA"
       test "$(git -C "$MS_REPO" rev-parse HEAD)" = "$MS_SHA"
-      test -z "$(git -C "$MS_REPO" diff --name-only)"
+      git -C "$MS_REPO" ls-files --error-unmatch "${config#"$MS_REPO"/}" >/dev/null
+      test -z "$(git -C "$MS_REPO" status --porcelain --untracked-files=all)"
       ;;
     build)
       local tree before; tree="$(git -C "$MS_REPO" rev-parse 'HEAD^{tree}')"; before="$run/images-before-build"
@@ -209,51 +223,9 @@ perform() {
       ;;
     configure-shadow|configure-rust|configure-disabled)
       local mode="${operation#configure-}" env_temp="${working}/.env.run-$run_id"
-      awk -v mode="$mode" 'BEGIN{done=0} /^MEDIA_SIDECAR_MODE=/{if(!done){print "MEDIA_SIDECAR_MODE=" mode;done=1}next} {print} END{if(!done)print "MEDIA_SIDECAR_MODE=" mode}' "$working/.env" >"$env_temp"
+      awk -v mode="$mode" -v sha="$MS_SHA" 'BEGIN{modeDone=0;shaDone=0} /^MEDIA_SIDECAR_MODE=/{if(!modeDone){print "MEDIA_SIDECAR_MODE=" mode;modeDone=1}next} /^DEPLOY_SHA=/{if(!shaDone){print "DEPLOY_SHA=" sha;shaDone=1}next} {print} END{if(!modeDone)print "MEDIA_SIDECAR_MODE=" mode;if(!shaDone)print "DEPLOY_SHA=" sha}' "$working/.env" >"$env_temp"
       chmod 0600 "$env_temp"; sync -f "$env_temp"; mv -f "$env_temp" "$working/.env"; sync -f "$working"
-      cat >"$config" <<YAML
-services:
-  server:
-    image: discord-music-server:$MS_SHA
-    container_name: discord-music
-    restart: unless-stopped
-    env_file: [.env]
-    environment:
-      DATABASE_PATH: /data/discord-music.sqlite
-      HOST: 0.0.0.0
-      PORT: 3000
-      MEDIA_SIDECAR_URL: http://media-sidecar:3101
-    ports: ["3000:3000"]
-    volumes:
-      - discord-music-data:/data
-      - /opt/discord-music-secrets:/run/secrets/discord-music
-    depends_on:
-      media-sidecar:
-        condition: service_healthy
-    links: [media-sidecar]
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
-  media-sidecar:
-    image: discord-music-media-sidecar:$MS_SHA
-    restart: unless-stopped
-    environment: {SIDECAR_HOST: 0.0.0.0, SIDECAR_PORT: 3101}
-    expose: ["3101"]
-    healthcheck:
-      test: ["CMD", "deno", "eval", "const r=await fetch('http://127.0.0.1:3101/healthz');if(r.status!==200)Deno.exit(1)"]
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 5s
-volumes:
-  discord-music-data:
-    external: true
-    name: deploy_discord-music-data
-YAML
-      chmod 0600 "$config"; sync -f "$config"; sync -f "$working"
+      test -z "$(git -C "$MS_REPO" status --porcelain --untracked-files=all)"
       ;;
     up)
       docker compose -p "$MS_PROJECT" -f "$config" up -d --force-recreate --remove-orphans
@@ -355,8 +327,8 @@ restore_locked() {
   deadline=$(( $(boottime)+120 )); events_since="$(jq -r .eventCursor "$manifest")"; events_until="$(date +%s)"
   observed_count="$(docker events --since "$events_since" --until "$events_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"
   while test "$(boottime)" -lt "$deadline"; do
-    cp "$run/compose.yaml" "$config"; cp "$run/deploy.env" "$working/.env"; chmod 0600 "$config" "$working/.env"
     git -C "$MS_REPO" reset --hard "$(jq -r .priorState.git "$manifest")" >/dev/null
+    cp "$run/compose.yaml" "$config"; cp "$run/deploy.env" "$working/.env"; chmod 0600 "$config" "$working/.env"
     server_source="$(jq -r .priorState.serverImage "$manifest")"; docker image inspect "$server_source" >/dev/null 2>&1 || server_source="$(jq -r .rollbackTags.server "$manifest")"
     docker tag "$server_source" "$server_ref" || return 1
     if jq -e '.priorState.sidecarPresent' "$manifest" >/dev/null; then
@@ -563,10 +535,20 @@ cleanup_failed_images() {
   jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
 commit_run() {
-  local run_id="$1" expected="$2" next
+  local run_id="$1" expected="$2" next run manifest config cursor events_until observed quiet_since quiet_until quiet_events sample1 sample2 stable_at
   require_root; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"; next=$((expected+1))
-  jq --argjson sequence "$next" '.sequence=$sequence | .state="committed" | .restoreState="idle" | .activeMutation=null' "$MS_LEASE" | lease_write
-  jq -cn --arg runId "$run_id" --argjson sequence "$next" '{ok:true,runId:$runId,sequence:$sequence,state:"committed"}'
+  jq -e '.activeMutation==null and (.acceptedOperations|all(.status!="accepted"))' "$MS_LEASE" >/dev/null || die accepted-operation-active
+  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; config="$(jq -r .configPath "$manifest")"; cursor="$(lease_value .eventCursor)"
+  events_until="$(date --iso-8601=ns)"
+  observed="$(docker events --since "$cursor" --until "$events_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"
+  sample1="$(state_fingerprint "$config")"; quiet_since="$(date +%s)"; sleep 5
+  sample2="$(state_fingerprint "$config")"; quiet_until="$(date +%s)"
+  quiet_events="$(docker events --since "$quiet_since" --until "$quiet_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"
+  test "$sample1" = "$sample2" || die commit-state-unstable
+  test "$quiet_events" -eq 0 || die commit-daemon-not-quiet
+  cas_active "$run_id" "$expected"; stable_at="$(boottime)"
+  jq --argjson sequence "$next" --arg cursor "$cursor" --argjson observed "$observed" --argjson stableAt "$stable_at" '.sequence=$sequence | .state="committed" | .restoreState="idle" | .stableSamples=2 | .activeMutation=null | .eventProof={cursor:$cursor,observedCount:$observed,quietWindowEvents:0,stableAtBoottime:$stableAt}' "$MS_LEASE" | lease_write
+  jq -cn --arg runId "$run_id" --argjson sequence "$next" --argjson observed "$observed" --argjson stableAt "$stable_at" '{ok:true,runId:$runId,sequence:$sequence,state:"committed",eventProof:{retained:true,observedCount:$observed,quietWindowEvents:0,stableAtBoottime:$stableAt}}'
 }
 state() { require_root; jq -c '{ok:true,runId,generation,selectedSha,sequence,state,restoreState,stableSamples,deadlineClock,lateDaemonDetected,reconcilePasses,eventProof,acceptedOperationCount:(.acceptedOperations|length),acceptedOperationsTerminal:(.acceptedOperations|all(.status!="accepted")),activeOperation:(.activeMutation.operation // null)}' "$MS_LEASE"; }
 

@@ -5,6 +5,7 @@ import test from "node:test"
 
 const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url))
 const source = owner.toString("utf8")
+const compose = readFileSync(new URL("../deploy/compose.yaml", import.meta.url), "utf8")
 
 test("remote owner contains irreversible lease and daemon gates", () => {
   for (const required of [
@@ -36,8 +37,6 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "dnsCount",
     "mismatchFirst",
     "mismatchSecond",
-    "condition: service_healthy",
-    "links: [media-sidecar]",
     "restore-first-sample",
     "json_fingerprint",
     'sync -f "$payload"',
@@ -49,6 +48,8 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "KILL",
   ])
     assert.ok(source.includes(required), `missing ${required}`)
+  for (const required of ["condition: service_healthy", "links: [media-sidecar]"])
+    assert.ok(compose.includes(required), `missing ${required}`)
   assert.doesNotMatch(source, /docker (system prune|volume rm)|down[^\n]*--volumes/u)
 })
 

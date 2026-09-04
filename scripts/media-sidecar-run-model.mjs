@@ -74,6 +74,7 @@ export class DeploymentModel {
       accepted: [],
       stableSamples: 0,
       lateDaemonDetected: false,
+      eventProof: null,
     }
     this.writes.push("active_published")
     if (crashAt === "after_active_publish") throw new ModelError("injected_crash")
@@ -123,10 +124,19 @@ export class DeploymentModel {
     }
   }
 
-  commit({ runId, sequence }) {
+  commit({ runId, sequence, quietWindowEvents = 0, stable = true }) {
     const lease = this.requireActive(runId, sequence)
     if (!lease.tagsVerified) throw new ModelError("rollback_tags_missing")
+    if (lease.accepted.some(({ terminal }) => !terminal))
+      throw new ModelError("accepted_operation_active")
+    if (!stable || quietWindowEvents !== 0) throw new ModelError("daemon_not_quiet")
     lease.sequence += 1
+    lease.eventProof = {
+      cursor: lease.generation,
+      observedCount: lease.accepted.length,
+      quietWindowEvents,
+      stableAtBoottime: this.now,
+    }
     lease.state = "committed"
     this.writes.push("committed")
     return { sequence: lease.sequence, state: lease.state }

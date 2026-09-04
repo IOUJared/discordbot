@@ -190,6 +190,10 @@ protocol in `scripts/media-sidecar-remote-rollback.sh`. Each run takes an exact 
 uses monotonic random run IDs plus sequence/deadline CAS, launches an LXC-local watchdog, and
 retains terminal rollback material for seven days. A failed controller is fenced and the Docker
 daemon is reconciled to two quiet five-second samples without removing the database or volumes.
+The production layout uses the tracked `deploy/compose.yaml`; set `DEPLOY_SHA` in its protected
+`.env` to the exact deployed commit. The owner migrates a matching legacy untracked Compose file
+into its root-only checkpoint before the first tracked checkout, and completed leases retain a
+quiet Docker-event proof.
 The bounded helper modules separate remote transport, evidence artifact writes, benchmarking, and
 the deterministic lease model from orchestration.
 The supported production supervisor is Docker Compose; do not add a systemd unit for the sidecar.
