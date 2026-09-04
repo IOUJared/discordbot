@@ -52,7 +52,9 @@
       "!apps/dashboard/test-results",
       "!apps/dashboard/vite.config.ts",
       "!apps/dashboard/playwright.config.ts",
-      "!apps/dashboard/svelte.config.js"
+      "!apps/dashboard/svelte.config.js",
+      "!apps/media-sidecar/target",
+      "!spec/media-sidecar/v1"
     ]
   }
 }

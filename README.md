@@ -132,7 +132,8 @@ pnpm --filter @discord-music/dashboard test:e2e
 `pnpm format` applies Biome formatting locally; CI uses the non-mutating `pnpm format:check`.
 
 CI runs the first five commands on Node 24 with a frozen lockfile. Live Discord and YouTube are
-not required in CI.
+not required in CI. Node, Rust, the deterministic Node-to-Rust benchmark, the deployment state
+machine, and the private-image policy run as independent CI jobs. Rust is pinned to `1.98.0`.
 
 ## Updating
 
@@ -160,6 +161,38 @@ docker compose logs -f server
 The API is published on port 3000 and the static dashboard on port 4173. SQLite is stored in the
 named `music-data` volume. The server image is based on Node 24 Alpine and includes FFmpeg,
 `yt-dlp`, and `tini`. Rebuild the image regularly to receive extractor updates.
+
+### Rust media sidecar
+
+The optional extractor sidecar owns only private `/healthz`, `/v1/search`, and `/v1/resolve`
+requests. Node still owns the public API and authentication, search cache/coalescing/preload, URL
+policy, streaming and FFmpeg, Discord voice/player state, SQLite, playlists, and radio. The
+sidecar is Rust `1.98.0` on Axum with four extractor permits and fixed limits: 16 KiB requests,
+1 MiB HTTP/Innertube responses, 4 MiB yt-dlp stdout, 64 KiB stderr, five search renderers,
+2.5-second search, 20-second resolve, and ten-second shutdown drain. The Node client deadlines are
+three seconds for search and 21 seconds for resolve.
+
+Set one deployment mode in the server environment:
+
+- `MEDIA_SIDECAR_MODE=disabled` keeps all extraction local and constructs no sidecar client.
+- `MEDIA_SIDECAR_MODE=shadow` returns the local result while privately comparing bounded Rust
+  work.
+- `MEDIA_SIDECAR_MODE=rust` uses Rust with typed, narrow fallback only for overload, deadlines,
+  internal/protocol/transport failures. Abort and valid extractor/request failures do not fall back.
+
+For `shadow` or `rust`, set `MEDIA_SIDECAR_URL=http://media-sidecar:3101`. Compose exposes 3101
+only to its private network; it is never published to the host or reverse proxy. The sidecar image
+pins Tini `0.19.0`, yt-dlp `2026.08.19`, and Deno `2.9.5`. yt-dlp runs with an empty proxy, the
+fixed Deno path, a cleared environment, bounded output, and no remote component downloads.
+
+Production rollout uses `scripts/media-sidecar-integration.mjs` and the root-owned remote lease
+protocol in `scripts/media-sidecar-remote-rollback.sh`. Each run takes an exact atomic checkpoint,
+uses monotonic random run IDs plus sequence/deadline CAS, launches an LXC-local watchdog, and
+retains terminal rollback material for seven days. A failed controller is fenced and the Docker
+daemon is reconciled to two quiet five-second samples without removing the database or volumes.
+The bounded helper modules separate remote transport, evidence artifact writes, benchmarking, and
+the deterministic lease model from orchestration.
+The supported production supervisor is Docker Compose; do not add a systemd unit for the sidecar.
 
 For upgrades, build first, then replace the containers:
 
@@ -192,6 +225,9 @@ Keep `HOST=127.0.0.1` when Caddy runs on the same machine, and allow public inbo
 to ports 80 and 443.
 
 ## systemd
+
+This section applies only to the legacy Node-only deployment. The Rust sidecar deployment uses
+Docker Compose and its independent restart/health policy; it is not managed by systemd.
 
 Install Node 24, pnpm dependencies, FFmpeg, and `yt-dlp`, then build under
 `/opt/discord-music`. Create a locked-down `discord-music` system user and writable storage:

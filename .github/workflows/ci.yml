@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  node:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,5 +26,53 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path apps/media-sidecar/Cargo.toml --check
+      - run: cargo clippy --locked --manifest-path apps/media-sidecar/Cargo.toml --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --manifest-path apps/media-sidecar/Cargo.toml --all-features
+      - run: cargo build --release --locked --manifest-path apps/media-sidecar/Cargo.toml
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @discord-music/contracts build
+      - run: cargo build --release --locked --manifest-path apps/media-sidecar/Cargo.toml --features test-upstream --bin media-sidecar-test-harness
+      - run: pnpm --filter @discord-music/server test -- tests/media/youtube-sidecar-benchmark.test.ts
+      - run: node --test scripts/media-sidecar-integration.test.mjs
+      - run: node scripts/verify-media-sidecar-image.mjs local-verify --compose docker-compose.media-sidecar-qa.yml --assert
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @discord-music/contracts build
       - run: pnpm --filter @discord-music/dashboard exec playwright install --with-deps chromium
       - run: pnpm --filter @discord-music/dashboard test:e2e
