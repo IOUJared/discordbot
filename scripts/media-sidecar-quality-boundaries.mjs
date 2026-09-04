@@ -1,3 +1,7 @@
+import { existsSync, readdirSync } from "node:fs"
+import { join, relative, sep } from "node:path"
+import { fileURLToPath } from "node:url"
+
 export const REQUIRED_BOUNDARIES = [
   "bounds",
   "supervised-cancellation",
@@ -10,53 +14,63 @@ export const REQUIRED_BOUNDARIES = [
   "daemon-convergence",
 ]
 
-export const SIZE_PATHS = [
-  "apps/media-sidecar/tests/http_contract.rs",
-  "apps/media-sidecar/tests/http_failures.rs",
-  "apps/media-sidecar/tests/http_shutdown.rs",
-  "apps/media-sidecar/tests/search.rs",
-  "apps/media-sidecar/tests/search_benchmark.rs",
-  "apps/media-sidecar/tests/search_transport.rs",
-  "apps/media-sidecar/tests/support/http_contract.rs",
-  "apps/media-sidecar/tests/support/search.rs",
-  "apps/server/tests/media/youtube-sidecar-client.test.ts",
-  "apps/server/tests/media/youtube-sidecar-client-errors.test.ts",
-  "apps/server/tests/media/youtube-sidecar-client-transport.test.ts",
-  "apps/server/tests/media/youtube-sidecar-client.test-helpers.ts",
-  "apps/server/tests/media/youtube.test.ts",
-  "apps/server/tests/media/youtube-resolve.test.ts",
-  "apps/server/tests/media/youtube-search-cache.test.ts",
-  "apps/server/tests/media/youtube-search-preload.test.ts",
-  "apps/server/tests/media/youtube.test-helpers.ts",
-  "scripts/media-sidecar-integration.mjs",
-  "scripts/media-sidecar-integration.test.mjs",
-  "scripts/media-sidecar-integration-test-support.mjs",
-  "scripts/media-sidecar-attestation.cases.mjs",
-  "scripts/media-sidecar-audit.mjs",
-  "scripts/media-sidecar-inspection.cases.mjs",
-  "scripts/media-sidecar-storage.cases.mjs",
-  "scripts/media-sidecar-lease.cases.mjs",
-  "scripts/media-sidecar-quality-attestation.mjs",
-  "scripts/media-sidecar-quality-boundaries.mjs",
-]
-
-export const SOURCE_PATHS = [
+const EXACT_SOURCE_PATHS = new Set([
   "Dockerfile.media-sidecar",
   "apps/media-sidecar/Cargo.toml",
   "apps/media-sidecar/rust-toolchain.toml",
-  "apps/media-sidecar/src/http.rs",
-  "apps/media-sidecar/src/observation.rs",
-  "apps/media-sidecar/src/operations.rs",
-  "apps/media-sidecar/src/process.rs",
-  "apps/media-sidecar/src/search.rs",
-  "apps/server/src/media/youtube-sidecar-client.ts",
-  "apps/server/src/media/youtube-sidecar-observation.ts",
-  "apps/server/src/media/youtube.ts",
+  "apps/media-sidecar/build.rs",
+  "apps/server/src/api/state-routes.ts",
+  "apps/server/src/app.ts",
+  "apps/server/src/config.ts",
+  "apps/server/src/runtime/production.ts",
+  "apps/server/tests/api/config.test.ts",
+  "apps/server/tests/runtime/runtime.test.ts",
   "deploy/compose.yaml",
-  "scripts/media-sidecar-remote-rollback.sh",
-  "scripts/verify-media-sidecar-image-remote.sh",
-  ...SIZE_PATHS,
+])
+
+const SOURCE_ROOTS = [
+  "apps/media-sidecar/src",
+  "apps/media-sidecar/tests",
+  "apps/server/src/media",
+  "apps/server/tests/media",
+  "scripts",
+  "spec/media-sidecar/v1",
 ]
+
+export const SIZE_EXEMPT_PATHS = new Set(["scripts/media-sidecar-remote-rollback.sh"])
+
+export function isMigrationSourcePath(path) {
+  return (
+    EXACT_SOURCE_PATHS.has(path) ||
+    path.startsWith("apps/media-sidecar/src/") ||
+    path.startsWith("apps/media-sidecar/tests/") ||
+    path.startsWith("apps/server/src/media/") ||
+    path.startsWith("apps/server/tests/media/") ||
+    path.startsWith("spec/media-sidecar/v1/") ||
+    /^scripts\/(?:media-sidecar|verify-media-sidecar).*(?:\.mjs|\.sh)$/u.test(path)
+  )
+}
+
+export function discoverSourcePaths(root) {
+  const paths = [...EXACT_SOURCE_PATHS].filter((path) => existsSync(join(root, path)))
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolute = join(directory, entry.name)
+      if (entry.isDirectory()) visit(absolute)
+      else if (entry.isFile()) {
+        const path = relative(root, absolute).split(sep).join("/")
+        if (isMigrationSourcePath(path)) paths.push(path)
+      }
+    }
+  }
+  for (const path of SOURCE_ROOTS) {
+    const directory = join(root, path)
+    if (existsSync(directory)) visit(directory)
+  }
+  return paths.sort()
+}
+
+export const SOURCE_PATHS = discoverSourcePaths(fileURLToPath(new URL("../", import.meta.url)))
 
 export const PROOFS = new Map([
   [

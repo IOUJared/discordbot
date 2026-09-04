@@ -228,3 +228,18 @@ test("code-quality attestation rejects an oversized migration module", () => {
     rmSync(item.directory, { recursive: true, force: true })
   }
 })
+
+test("code-quality attestation discovers an oversized source omitted from static lists", () => {
+  const item = fixture()
+  const sourceRoot = sourceFixture(item)
+  const path = join(sourceRoot, "apps/media-sidecar/src/unlisted.rs")
+  writeFileSync(path, "fn omitted() {}\n".repeat(251))
+  try {
+    assert.throws(
+      () => attestCodeQualityFixture(fixtureValues(item), item.sha, sourceRoot),
+      /attestation-proof-bounds/u,
+    )
+  } finally {
+    rmSync(item.directory, { recursive: true, force: true })
+  }
+})

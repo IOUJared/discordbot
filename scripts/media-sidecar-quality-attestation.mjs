@@ -5,10 +5,11 @@ import { resolve } from "node:path"
 
 import { hashFile, writeArtifact } from "./media-sidecar-artifact.mjs"
 import {
+  discoverSourcePaths,
+  isMigrationSourcePath,
   PROOFS,
   REQUIRED_BOUNDARIES,
-  SIZE_PATHS,
-  SOURCE_PATHS,
+  SIZE_EXEMPT_PATHS,
 } from "./media-sidecar-quality-boundaries.mjs"
 import { RemoteError, required } from "./media-sidecar-remote-client.mjs"
 
@@ -75,7 +76,14 @@ function assertF3(state, sha) {
 function loadSources(root, sha) {
   const sources = new Map()
   try {
-    for (const path of SOURCE_PATHS) {
+    const paths =
+      typeof root === "string"
+        ? discoverSourcePaths(root)
+        : execFileSync("git", ["ls-tree", "-r", "--name-only", sha], { encoding: "utf8" })
+            .trim()
+            .split("\n")
+            .filter(isMigrationSourcePath)
+    for (const path of paths) {
       const source =
         typeof root === "string"
           ? readFileSync(resolve(root, path), "utf8")
@@ -100,7 +108,7 @@ function pureLines(source) {
       blockComment = !trimmed.includes("*/")
       return false
     }
-    return trimmed !== "" && !trimmed.startsWith("//") && !trimmed.startsWith("# ")
+    return trimmed !== "" && !trimmed.startsWith("//") && !trimmed.startsWith("#")
   }).length
 }
 
@@ -117,8 +125,8 @@ function assertProofs(sources) {
   const cargo = sources.get("apps/media-sidecar/Cargo.toml") ?? ""
   const dependencies = cargo.match(/\[dependencies\]\n([\s\S]+?)\n\[lints/u)?.[1] ?? ""
   if (/version = "(?!=)/u.test(dependencies)) fail("attestation-proof-pins")
-  for (const path of SIZE_PATHS) {
-    if (pureLines(sources.get(path) ?? "") > 250) fail("attestation-proof-bounds")
+  for (const [path, source] of sources) {
+    if (!SIZE_EXEMPT_PATHS.has(path) && pureLines(source) > 250) fail("attestation-proof-bounds")
   }
 }
 
