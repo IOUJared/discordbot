@@ -217,8 +217,10 @@ function remoteRun(values, mode) {
     },
   )
   const expected = mode === "drain" ? 86 : 0
-  if (result.status !== expected || !result.stdout.includes("cleanup=true"))
-    throw new VerifierError("remote-verification")
+  if (result.status !== expected || !result.stdout.includes("cleanup=true")) {
+    const failure = result.stdout.match(/failure_stage=([a-z-]+)/u)?.[1] ?? "unknown"
+    throw new VerifierError(`remote-${failure}`)
+  }
   return result.stdout.trim()
 }
 

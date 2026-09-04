@@ -2,27 +2,31 @@ set -Eeuo pipefail
 umask 077
 work="$REMOTE_ROOT/$CHECKPOINT_SHA"; source="$work/source"; raw="$work/raw.log"
 cleanup() { cd /; CHECKPOINT_SHA="$CHECKPOINT_SHA" CHECKPOINT_TREE="$CHECKPOINT_TREE" docker compose -p "$PROJECT" -f "$source/$COMPOSE" down --remove-orphans --volumes >"$raw" 2>&1 || true; rm -rf -- "$work"; printf 'cleanup=true\n'; }
+failure() { printf 'failure_stage=%s\n' "$stage"; }
 trap cleanup EXIT
+trap failure ERR
+stage=clone
 git clone --quiet --no-checkout "$work/source.bundle" "$source" >"$raw" 2>&1
 git -C "$source" checkout --quiet --detach "$CHECKPOINT_SHA" >>"$raw" 2>&1
 test "$(git -C "$source" rev-parse HEAD)" = "$CHECKPOINT_SHA"
 test "$(git -C "$source" rev-parse 'HEAD^{tree}')" = "$CHECKPOINT_TREE"
 test -z "$(git -C "$source" status --porcelain)"
-cd "$source"; export CHECKPOINT_SHA CHECKPOINT_TREE
+cd "$source"; export CHECKPOINT_SHA CHECKPOINT_TREE; stage=compose-schema
 test "$(docker compose -p "$PROJECT" -f "$COMPOSE" config --services | paste -sd, -)" = media-sidecar,probe
 test "$(docker compose -p "$PROJECT" -f "$COMPOSE" config --images | sort | paste -sd, -)" = "discord-music-media-sidecar:qa-$CHECKPOINT_SHA,discord-music-node:qa-$CHECKPOINT_SHA"
 docker compose -p "$PROJECT" -f "$COMPOSE" config >"$raw" 2>&1
 ! grep -Eq '^[[:space:]]+(ports|volumes|env_file|secrets|configs):|external:[[:space:]]*true' "$raw"
-docker compose -p "$PROJECT" -f "$COMPOSE" build >"$raw" 2>&1
-docker compose -p "$PROJECT" -f "$COMPOSE" up -d >"$raw" 2>&1
+stage=image-build; docker compose -p "$PROJECT" -f "$COMPOSE" build >"$raw" 2>&1
+stage=compose-start; docker compose -p "$PROJECT" -f "$COMPOSE" up -d >"$raw" 2>&1
 sidecar="$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q media-sidecar)"; probe="$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q probe)"
-test -n "$sidecar"; test -n "$probe"
+test -n "$sidecar"; test -n "$probe"; stage=sidecar-health
 for attempt in $(seq 1 30); do test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$sidecar")" = healthy && break; sleep 1; done
-test "$(docker inspect -f '{{.State.Health.Status}}' "$sidecar")" = healthy
+test "$(docker inspect -f '{{.State.Health.Status}}' "$sidecar")" = healthy; stage=image-labels
 test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = "$CHECKPOINT_SHA"
 test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.source-tree"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = "$CHECKPOINT_TREE"
-test -z "$(docker port "$sidecar")"
+test -z "$(docker port "$sidecar")"; stage=private-health
 docker compose -p "$PROJECT" -f "$COMPOSE" exec -T probe node -e "fetch('http://media-sidecar:3101/healthz').then(async r=>{if(r.status!==200||JSON.stringify(await r.json())!=='{\"version\":1,\"status\":\"ok\"}')process.exit(1)})" >"$raw" 2>&1
+stage=sidecar-runtime
 docker compose -p "$PROJECT" -f "$COMPOSE" exec -T media-sidecar sh -ceu '
 test "$(cat /proc/1/comm)" = tini; tr "\0" " " </proc/1/cmdline | grep -Eq "^/usr/bin/tini -s -- /usr/local/bin/discord-music-media-sidecar"
 child="$(for p in /proc/[0-9]*; do test -r "$p/stat" || continue; set -- $(cat "$p/stat"); test "$4" = 1 && test "$2" = "(discord-music-)" && echo "${p##*/}" && break; done)"; test -n "$child"
@@ -34,13 +38,16 @@ echo "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a  /usr/loc
 /usr/local/bin/deno --version | grep -F "deno 2.9.5"
 ! command -v node; ! command -v bun; ! command -v qjs; ! command -v ffmpeg
 ! grep -aEq "test-upstream|media-sidecar-test-harness" /usr/local/bin/discord-music-media-sidecar'
+stage=node-fallback-tools
 docker compose -p "$PROJECT" -f "$COMPOSE" exec -T probe sh -ceu 'ffmpeg -version >/dev/null; yt-dlp --version >/dev/null'
 if test "$VERIFY_MODE" = smoke; then
+  stage=challenge-smoke
   docker compose -p "$PROJECT" -f "$COMPOSE" exec -d probe node -e "const fs=require('node:fs'),net=require('node:net');fs.writeFileSync('/tmp/proxy-count','0');let n=0;net.createServer(s=>{n++;fs.writeFileSync('/tmp/proxy-count',String(n));s.destroy()}).listen(43123,'0.0.0.0');setInterval(()=>{},2147483647)"
   docker compose -p "$PROJECT" -f "$COMPOSE" exec -T media-sidecar sh -ceu 'umask 077; raw=/tmp/challenge.raw; trap "rm -f -- $raw" EXIT; HTTP_PROXY=http://probe:43123 HTTPS_PROXY=http://probe:43123 ALL_PROXY=http://probe:43123 NO_PROXY= http_proxy=http://probe:43123 https_proxy=http://probe:43123 all_proxy=http://probe:43123 no_proxy= /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1'
   test "$(docker compose -p "$PROJECT" -f "$COMPOSE" exec -T probe cat /tmp/proxy-count | tr -d '\r')" = 0
 fi
 if test "$VERIFY_MODE" = drain; then
+  stage=saturated-drain
   docker compose -p "$PROJECT" -f "$COMPOSE" exec -d probe node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
   observed=false; deno_observed=false; : >"$work/children"
   for attempt in $(seq 1 100); do
