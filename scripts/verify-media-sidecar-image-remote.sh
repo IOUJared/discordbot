@@ -29,7 +29,7 @@ docker exec "$probe" node -e "fetch('http://media-sidecar:3101/healthz').then(as
 stage=sidecar-runtime
 docker exec "$sidecar" sh -ceu '
 test "$(cat /proc/1/comm)" = tini; tr "\0" " " </proc/1/cmdline | grep -Eq "^/usr/bin/tini -s -- /usr/local/bin/discord-music-media-sidecar"
-child="$(for p in /proc/[0-9]*; do test -r "$p/stat" || continue; set -- $(cat "$p/stat"); test "$4" = 1 && test "$2" = "(discord-music-)" && echo "${p##*/}" && break; done)"; test -n "$child"
+child="$(for p in /proc/[0-9]*; do test -r "$p/stat" || continue; set -- $(cat "$p/stat"); test "$4" = 1 && test "$2" = "(discord-music-m)" && echo "${p##*/}" && break; done)"; test -n "$child"
 test "$(awk "/^Uid:/ {print \$2}" "/proc/$child/status")" != 0
 /usr/bin/tini --version 2>&1 | grep -F 0.19.0
 /usr/local/bin/discord-music-media-sidecar --version | grep -F "build '"${CHECKPOINT_SHA:0:12}"'"
