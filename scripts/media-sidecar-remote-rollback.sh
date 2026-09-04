@@ -16,6 +16,7 @@ readonly MS_DEADLINE_SECONDS="${MEDIA_DEADLINE_SECONDS:-600}"
 readonly MS_SELF="${BASH_SOURCE[0]:-/dev/stdin}"
 readonly MS_RETENTION_DAYS="${MEDIA_RETENTION_DAYS:-7}"
 readonly MS_DANGLING_RETENTION_DAYS="${MEDIA_DANGLING_RETENTION_DAYS:-1}"
+readonly MS_LEASE_TEMP_STALE_SECONDS=300
 
 die() { printf '{"ok":false,"stage":"%s"}\n' "$1" >&2; exit 1; }
 boottime() { awk '{printf "%d", $1}' /proc/uptime; }
@@ -48,6 +49,23 @@ cleanup_retention_locked() {
     test -z "$sidecar_tag" || docker image rm "$sidecar_tag" >/dev/null 2>&1 || true
     rm -rf -- "$candidate"
   done < <(find "$MS_BACKUP" -mindepth 1 -maxdepth 1 -type d -mtime "+$MS_RETENTION_DAYS" -print0)
+}
+cleanup_stale_lease_temps_locked() {
+  local candidate name pid now modified
+  if test -r "$MS_LEASE"; then
+    jq -e '(.state != "active") and (.restoreState != "restoring") and (.activeMutation == null)' "$MS_LEASE" >/dev/null || return 0
+  fi
+  now="$(date +%s)"
+  while IFS= read -r -d '' candidate; do
+    name="${candidate##*/}"; pid="${name##*.}"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+    kill -0 "$pid" 2>/dev/null && continue
+    test ! -s "$candidate" || continue
+    test "$(stat -c %u:%a "$candidate")" = "$(id -u):600" || continue
+    modified="$(stat -c %Y "$candidate")"
+    test "$((now-modified))" -ge "$MS_LEASE_TEMP_STALE_SECONDS" || continue
+    rm -f -- "$candidate"
+  done < <(find "$(dirname "$MS_LEASE")" -maxdepth 1 -type f -name "$(basename "$MS_LEASE").tmp.*" -print0)
 }
 remove_new_untagged_images() {
   local before="$1" after="${before}.after" id tags
@@ -172,6 +190,7 @@ begin_run() {
   test -e "$MS_LOCK" || install -m 0600 /dev/null "$MS_LOCK"
   test "$(stat -c %U:%G:%a "$MS_LOCK")" = root:root:600 || die lock-mode
   exec 9>"$MS_LOCK"; flock -x 9
+  cleanup_stale_lease_temps_locked
   if test -r "$MS_LEASE"; then
     local prior_state prior_restore prior_id
     prior_state="$(lease_value .state)"; prior_restore="$(lease_value .restoreState)"

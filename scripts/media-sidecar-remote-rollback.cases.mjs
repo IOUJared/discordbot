@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 
 const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url))
@@ -23,6 +33,7 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "stableSamples",
     "lateDaemonDetected",
     "cleanup_retention_locked",
+    "cleanup_stale_lease_temps_locked",
     "recover-restoring",
     "cleanup-failed-images",
     "images-before-build",
@@ -89,4 +100,85 @@ test "$(project_mutation_event_count 1 2)" = 1
 `
   const result = spawnSync("bash", ["-s"], { input: probe, encoding: "utf8" })
   assert.equal(result.status, 0, result.stderr)
+})
+
+test("lease temp cleanup is fenced by terminal state and strict file validation", () => {
+  // Given: stale and fresh lease-shaped files coexist with invalid files under an active lease.
+  const root = mkdtempSync(join(tmpdir(), "media-lease-temp-"))
+  const lease = join(root, "active.json")
+  const removable = `${lease}.tmp.99999991`
+  const nonempty = `${lease}.tmp.99999992`
+  const fresh = `${lease}.tmp.99999993`
+  const invalid = `${lease}.tmp.not-a-pid`
+  const wrongMode = `${lease}.tmp.99999994`
+  const active = `${lease}.tmp.99999995`
+  const livePid = `${lease}.tmp.${process.pid}`
+  const old = new Date(Date.now() - 600_000)
+  for (const path of [removable, fresh, invalid, wrongMode, active, livePid])
+    writeFileSync(path, "")
+  writeFileSync(nonempty, "retained")
+  for (const path of [removable, nonempty, invalid, wrongMode, active, livePid])
+    utimesSync(path, old, old)
+  for (const path of [removable, nonempty, fresh, invalid, active, livePid]) chmodSync(path, 0o600)
+  chmodSync(wrongMode, 0o644)
+  writeFileSync(
+    lease,
+    JSON.stringify({ state: "active", restoreState: "idle", activeMutation: null }),
+  )
+  const prefix = source.slice(0, source.indexOf("preflight() {"))
+
+  try {
+    // When: cleanup runs under active, restoring, and finally terminal-idle lease states.
+    let result = spawnSync("bash", ["-s"], {
+      input: `${prefix}\ncleanup_stale_lease_temps_locked\n`,
+      encoding: "utf8",
+      env: { ...process.env, MEDIA_BACKUP_ROOT: root, MEDIA_LEASE_FILE: lease },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(existsSync(active), true)
+    writeFileSync(
+      lease,
+      JSON.stringify({
+        state: "committed",
+        restoreState: "idle",
+        activeMutation: { operation: "up" },
+      }),
+    )
+    result = spawnSync("bash", ["-s"], {
+      input: `${prefix}\ncleanup_stale_lease_temps_locked\n`,
+      encoding: "utf8",
+      env: { ...process.env, MEDIA_BACKUP_ROOT: root, MEDIA_LEASE_FILE: lease },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(existsSync(active), true)
+    writeFileSync(
+      lease,
+      JSON.stringify({ state: "expired", restoreState: "restoring", activeMutation: null }),
+    )
+    result = spawnSync("bash", ["-s"], {
+      input: `${prefix}\ncleanup_stale_lease_temps_locked\n`,
+      encoding: "utf8",
+      env: { ...process.env, MEDIA_BACKUP_ROOT: root, MEDIA_LEASE_FILE: lease },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(existsSync(active), true)
+    writeFileSync(
+      lease,
+      JSON.stringify({ state: "committed", restoreState: "idle", activeMutation: null }),
+    )
+    result = spawnSync("bash", ["-s"], {
+      input: `${prefix}\ncleanup_stale_lease_temps_locked\n`,
+      encoding: "utf8",
+      env: { ...process.env, MEDIA_BACKUP_ROOT: root, MEDIA_LEASE_FILE: lease },
+    })
+
+    // Then: only dead-PID, zero-byte, mode-0600, stale lease temps are removed.
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(existsSync(removable), false)
+    assert.equal(existsSync(active), false)
+    for (const retained of [nonempty, fresh, invalid, wrongMode, livePid])
+      assert.equal(existsSync(retained), true, retained)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
