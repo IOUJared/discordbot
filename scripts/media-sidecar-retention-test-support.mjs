@@ -145,26 +145,69 @@ export function withRetentionFixture(callback) {
     chmodSync(path, 0o600)
     return { REPLACE_LEASE_WITH: path }
   }
+  const ownerEnvironment = (environment = {}, uid = process.getuid()) => ({
+    ...process.env,
+    MEDIA_OWNER_TEST_ROOT: fixture,
+    MEDIA_OWNER_TEST_UID: String(uid),
+    MEDIA_SELECTED_SHA: hex("8", 40),
+    MEDIA_OWNER_B64: Buffer.from("#!/usr/bin/env bash\nexit 0\n").toString("base64"),
+    MEDIA_COMPOSE_PROJECT: "deploy",
+    TEST_CONFIG: config,
+    TEST_LOCK: lock,
+    DOCKER_STATE: dockerState,
+    DOCKER_MUTATIONS: dockerMutations,
+    LEASE_PATH: lease,
+    REPLACEMENT_MARKER: replacementMarker,
+    PATH: `${bin}:${process.env.PATH}`,
+    ...environment,
+  })
   const invoke = (environment = {}) =>
     spawnSync("bash", [ownerPath, "begin-run"], {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        MEDIA_OWNER_TEST_ROOT: fixture,
-        MEDIA_OWNER_TEST_UID: String(process.getuid()),
-        MEDIA_SELECTED_SHA: hex("8", 40),
-        MEDIA_OWNER_B64: Buffer.from("#!/usr/bin/env bash\nexit 0\n").toString("base64"),
-        MEDIA_COMPOSE_PROJECT: "deploy",
-        TEST_CONFIG: config,
-        TEST_LOCK: lock,
-        DOCKER_STATE: dockerState,
-        DOCKER_MUTATIONS: dockerMutations,
-        LEASE_PATH: lease,
-        REPLACEMENT_MARKER: replacementMarker,
-        PATH: `${bin}:${process.env.PATH}`,
-        ...environment,
-      },
+      env: ownerEnvironment(environment),
     })
+  const invokeWithBindMount = (source, target, environment = {}) =>
+    spawnSync(
+      "unshare",
+      [
+        "--user",
+        "--map-root-user",
+        "--mount",
+        "bash",
+        "-c",
+        'mount --bind "$1" "$2" && exec "$3" begin-run',
+        "mount-fixture",
+        source,
+        target,
+        ownerPath,
+      ],
+      { encoding: "utf8", env: ownerEnvironment(environment, 0) },
+    )
+  const invokeConcurrent = (environment = {}) => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        'set +e; "$1" begin-run >"$2/first.out" 2>"$2/first.err" & first=$!; "$1" begin-run >"$2/second.out" 2>"$2/second.err" & second=$!; wait "$first"; first_status=$?; wait "$second"; second_status=$?; printf "%s %s\\n" "$first_status" "$second_status"',
+        "concurrent-fixture",
+        ownerPath,
+        fixture,
+      ],
+      { encoding: "utf8", env: ownerEnvironment(environment) },
+    )
+    return {
+      ...result,
+      errors: [
+        readFileSync(join(fixture, "first.err"), "utf8"),
+        readFileSync(join(fixture, "second.err"), "utf8"),
+      ],
+      outputs: [
+        readFileSync(join(fixture, "first.out"), "utf8"),
+        readFileSync(join(fixture, "second.out"), "utf8"),
+      ],
+      statuses: result.stdout.trim().split(" ").map(Number),
+    }
+  }
   const initialCurrent = addArchive({ generation: 99, ageMs: 60_000 })
   setLease(initialCurrent)
   try {
@@ -179,6 +222,8 @@ export function withRetentionFixture(callback) {
       injectionMarker,
       initialCurrent,
       invoke,
+      invokeConcurrent,
+      invokeWithBindMount,
       lease,
       replacementMarker,
       replaceLeaseDuringDocker: replacementEnvironment,

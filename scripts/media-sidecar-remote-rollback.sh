@@ -385,6 +385,7 @@ uid = int(uid_value)
 bindings = dict(line.split("=", 1) for line in bindings_value.splitlines())
 kill_phase = os.environ.get("MEDIA_OWNER_TEST_KILL_PHASE", "") if test_root else ""
 fail_phase = os.environ.get("MEDIA_OWNER_TEST_FAIL_RECOVERY_PHASE", "") if test_root else ""
+test_tokens = os.environ.get("MEDIA_OWNER_TEST_QUARANTINE_TOKENS", "").split(",") if test_root and os.environ.get("MEDIA_OWNER_TEST_QUARANTINE_TOKENS") else []
 counter_value = 0
 if os.path.lexists(counter):
     value = os.lstat(counter)
@@ -396,6 +397,7 @@ if os.path.lexists(counter):
 run_pattern = re.compile(r"^([1-9][0-9]*)-([0-9a-f]{32})$")
 temp_pattern = re.compile(r"^\.([1-9][0-9]*-[0-9a-f]{32})\.tmp$")
 quarantine_pattern = re.compile(r"^\.begin-quarantine\.([1-9][0-9]*-[0-9a-f]{32})\.([0-9a-f]{32})$")
+counter_stage_pattern = re.compile(r"^run-counter\.recover\.[1-9][0-9]*(?:\.([0-9a-f]{32}))?$")
 
 def crash(name):
     if kill_phase != name: return
@@ -406,6 +408,27 @@ def sync_backup():
     directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
     try: os.fsync(directory)
     finally: os.close(directory)
+
+def recovery_token():
+    if not test_tokens: return secrets.token_hex(16)
+    token = test_tokens.pop(0)
+    if not re.fullmatch(r"[0-9a-f]{32}", token): raise ValueError("invalid test token")
+    return token
+
+def decode_mount_path(value):
+    return re.sub(r"\\([0-7]{3})", lambda item: chr(int(item.group(1), 8)), value)
+
+mounts = []
+with open("/proc/self/mountinfo", encoding="ascii") as source:
+    for line in source:
+        fields = line.split(" - ", 1)[0].split()
+        if len(fields) < 5: raise ValueError("invalid mountinfo")
+        mounts.append(os.path.normpath(decode_mount_path(fields[4])))
+
+def contains_mount(path):
+    normalized = os.path.normpath(path)
+    prefix = f"{normalized}{os.sep}"
+    return any(mount == normalized or mount.startswith(prefix) for mount in mounts)
 
 def unique(pairs):
     value = {}
@@ -437,6 +460,19 @@ quarantine_actions = []
 quarantines = []
 max_generation = counter_value
 for name in sorted(os.listdir(backup)):
+    counter_stage = counter_stage_pattern.fullmatch(name)
+    if name.startswith("run-counter.recover.") and not counter_stage:
+        raise ValueError("invalid counter stage name")
+    if counter_stage:
+        path = os.path.join(backup, name)
+        value = os.lstat(path)
+        if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o600:
+            raise ValueError("unsafe counter stage")
+        raw = open(path, encoding="ascii").read()
+        if not raw.endswith("\n") or not raw[:-1].isdigit(): raise ValueError("invalid counter stage")
+        max_generation = max(max_generation, int(raw[:-1]))
+        file_actions.append(("unlink", path))
+        continue
     lease_stage = re.fullmatch(r"active\.json\.begin\.([1-9][0-9]*-[0-9a-f]{32})\.tmp", name)
     if lease_stage:
         value = os.lstat(os.path.join(backup, name))
@@ -454,6 +490,7 @@ for name in sorted(os.listdir(backup)):
         value = os.lstat(path)
         if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o700:
             raise ValueError("unsafe quarantine")
+        if contains_mount(path): raise ValueError("mounted quarantine")
         generation = int(quarantine.group(1).split("-", 1)[0])
         max_generation = max(max_generation, generation)
         quarantines.append(path)
@@ -464,6 +501,7 @@ for name in sorted(os.listdir(backup)):
     value = os.lstat(path)
     if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o700:
         raise ValueError("unsafe owner artifact")
+    if contains_mount(path): raise ValueError("mounted owner artifact")
     generation = int(run_id.split("-", 1)[0]); max_generation = max(max_generation, generation)
     marker_path = os.path.join(path, ".begin-pending")
     if not os.path.lexists(marker_path):
@@ -480,11 +518,12 @@ for name in sorted(os.listdir(backup)):
 rename_plan = []
 for path, run_id in quarantine_actions:
     while True:
-        target = os.path.join(backup, f".begin-quarantine.{run_id}.{secrets.token_hex(16)}")
+        target = os.path.join(backup, f".begin-quarantine.{run_id}.{recovery_token()}")
         if not os.path.lexists(target): break
     rename_plan.append((path, target))
 if fail_phase == "quarantine-rename" and rename_plan:
     raise OSError("injected quarantine rename failure")
+crash("recovery-before-quarantine-rename")
 renamed = []
 try:
     for index, (source, target) in enumerate(rename_plan):
@@ -492,21 +531,29 @@ try:
             raise OSError("injected second quarantine rename failure")
         os.rename(source, target)
         renamed.append((source, target))
-    if renamed: sync_backup()
+    if renamed:
+        crash("recovery-after-quarantine-rename")
+        sync_backup()
+        crash("recovery-after-quarantine-fsync")
+        crash("recovery-quarantine-rename")
 except OSError:
     for source, target in reversed(renamed):
         if os.path.lexists(target) and not os.path.lexists(source): os.rename(target, source)
     if renamed: sync_backup()
     raise
 quarantines.extend(target for _, target in renamed)
-crash("recovery-quarantine-rename")
 if max_generation > counter_value:
-    staged = f"{counter}.recover.{os.getpid()}"
-    with open(staged, "w", encoding="ascii") as target:
+    crash("recovery-before-counter-temp")
+    staged = f"{counter}.recover.{os.getpid()}.{secrets.token_hex(16)}"
+    with open(staged, "x", encoding="ascii") as target:
         target.write(f"{max_generation}\n"); target.flush(); os.fsync(target.fileno())
-    os.chmod(staged, 0o600); os.replace(staged, counter)
+    os.chmod(staged, 0o600)
+    crash("recovery-before-counter-rename")
+    os.replace(staged, counter)
+    crash("recovery-after-counter-rename")
     sync_backup()
-crash("recovery-counter-fsync")
+    crash("recovery-after-counter-fsync")
+    crash("recovery-counter-fsync")
 for action, path in file_actions:
     os.unlink(path)
     if action == "unlink-marker":
@@ -520,6 +567,7 @@ for path in quarantines:
         removed = True
     except OSError:
         pass
+    crash("recovery-cleanup")
 if file_actions or removed: sync_backup()
 PY
 }
