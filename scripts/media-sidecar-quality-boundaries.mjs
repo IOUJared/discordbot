@@ -163,7 +163,7 @@ export const PROOFS = new Map([
       ],
       [
         "scripts/media-sidecar-remote-rollback.sh",
-        /begin_run\(\)[\s\S]+mv "\$temp" "\$run"; sync -f "\$MS_BACKUP"/u,
+        /commit_begin_run_locked\(\)[\s\S]+def rollback\(\):[\s\S]+os\.replace\(temp, run\)[\s\S]+write_atomic\(lease, next_lease\)[\s\S]+commit_begin_run_locked "\$temp" "\$run"/u,
       ],
     ],
   ],

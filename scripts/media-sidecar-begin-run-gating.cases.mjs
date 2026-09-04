@@ -117,6 +117,63 @@ test("begin-run detects lease pathname replacement at the Docker boundary", () =
   })
 })
 
+for (const phase of [
+  "temp-lease-write",
+  "checkpoint-rename",
+  "terminal-archive",
+  "counter-fsync",
+  "final-rename",
+]) {
+  test(`begin-run rolls back a lease replacement at ${phase}`, () => {
+    withRetentionFixture((fixture) => {
+      fixture.addArchive({ generation: 1 })
+      const replacement = JSON.stringify({ replacedAt: phase })
+      const before = snapshot(fixture)
+      const expected = structuredClone(before)
+      expected.backup["active.json"] = Buffer.from(replacement).toString("base64")
+
+      const result = fixture.invoke(fixture.replaceLeaseAtPhase(replacement, phase))
+
+      assert.equal(result.status, 1, result.stderr)
+      assert.match(result.stderr, /begin-transaction-failed/u)
+      assert.deepEqual(snapshot(fixture), expected)
+      assert.equal(
+        readdirSync(fixture.backup).some((name) => name.includes(".tmp")),
+        false,
+      )
+    })
+  })
+}
+
+for (const [phase, missingTag] of [
+  ["retention-apply", false],
+  ["repair-tag-inspect", false],
+  ["repair-source-inspect", true],
+  ["repair-tag", true],
+]) {
+  test(`begin-run preserves a committed transition after replacement at ${phase}`, () => {
+    withRetentionFixture((fixture) => {
+      const expired = fixture.addArchive({ generation: 1 })
+      const replacement = JSON.stringify({ replacedAt: phase })
+      const environment = fixture.replaceLeaseAtPhase(replacement, phase)
+      if (missingTag) environment.MISSING_REPAIR_TAG = "1"
+
+      const result = fixture.invoke(environment)
+
+      assert.equal(result.status, 1, result.stderr)
+      assert.match(result.stderr, /lease-replaced|lease-path-invalid/u)
+      assert.equal(fixture.read(fixture.lease), replacement)
+      assert.equal(fixture.read(fixture.counter), "100\n")
+      assert.equal(readdirSync(fixture.backup).filter((name) => name.startsWith("100-")).length, 1)
+      assert.equal(
+        readdirSync(fixture.backup).some((name) => name.includes(".tmp")),
+        false,
+      )
+      assert.equal(fixture.exists(expired.run), phase === "retention-apply")
+    })
+  })
+}
+
 for (const state of ["committed", "expired"]) {
   test(`begin-run accepts valid ${state} terminal lease exactly once`, () => {
     withRetentionFixture((fixture) => {

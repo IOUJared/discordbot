@@ -139,6 +139,12 @@ export function withRetentionFixture(callback) {
     chmodSync(lease, 0o600)
     return value
   }
+  const replacementEnvironment = (value) => {
+    const path = join(fixture, "replacement-lease.json")
+    writeFileSync(path, value)
+    chmodSync(path, 0o600)
+    return { REPLACE_LEASE_WITH: path }
+  }
   const invoke = (environment = {}) =>
     spawnSync("bash", [ownerPath, "begin-run"], {
       encoding: "utf8",
@@ -174,11 +180,10 @@ export function withRetentionFixture(callback) {
       invoke,
       lease,
       replacementMarker,
-      replaceLeaseDuringDocker: (value) => {
-        const path = join(fixture, "replacement-lease.json")
-        writeFileSync(path, value)
-        chmodSync(path, 0o600)
-        return { REPLACE_LEASE_WITH: path }
+      replaceLeaseDuringDocker: replacementEnvironment,
+      replaceLeaseAtPhase: (value, phase) => {
+        const environment = replacementEnvironment(value)
+        return { ...environment, MEDIA_OWNER_TEST_REPLACE_PHASE: phase }
       },
       replaceCurrentWithSymlink: () => {
         const sentinel = join(fixture, "external-sentinel")

@@ -127,11 +127,12 @@ verify_prior_checkpoint_locked() {
   observed_id="$(stat -c %d:%i "$MS_BACKUP/$MS_PRIOR_RUN_ID")" || die prior-checkpoint-replaced
   test "$observed_id" = "$MS_PRIOR_CHECKPOINT_ID" || die prior-checkpoint-replaced
 }
+verify_bound_lease_locked() { test -z "${MS_PRIOR_LEASE_ID:-}" || verify_prior_lease_locked; }
 lease_value() { strict_json_file "$MS_LEASE" || die lease-json-invalid; jq -er "$1" "$MS_LEASE"; }
 lease_write() { atomic_file "$MS_LEASE" 0600 "${1:-false}"; }
 cleanup_retention_locked() {
   local current="${1:-}" cutoff candidate modified run_id manifest terminal containers container image role tag source resolved revision
-  local -a candidates=() server_tags=() sidecar_tags=()
+  MS_RETENTION_CANDIDATES=(); MS_RETENTION_SERVER_TAGS=(); MS_RETENTION_SIDECAR_TAGS=()
   cutoff="$(date -d "$MS_RETENTION_DAYS days ago" +%s)" || die retention-cutoff-invalid
   containers="$(docker ps -aq)" || die retention-container-list
   while IFS= read -r container; do
@@ -155,7 +156,7 @@ cleanup_retention_locked() {
     validate_cleanup_archive "$manifest" "$terminal" "$run_id" || die retention-archive-invalid
     test "$(sha256sum "$candidate/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || die retention-archive-invalid
     test "$(sha256sum "$candidate/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$manifest")" || die retention-archive-invalid
-    candidates+=("$candidate"); server_tags+=(""); sidecar_tags+=("")
+    MS_RETENTION_CANDIDATES+=("$candidate"); MS_RETENTION_SERVER_TAGS+=(""); MS_RETENTION_SIDECAR_TAGS+=("")
     for role in server sidecar; do
       tag="$(jq -r --arg role "$role" '.rollbackTags[$role] // empty' "$manifest")"
       test -n "$tag" || continue
@@ -168,15 +169,21 @@ cleanup_retention_locked() {
       revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$tag")" || die retention-image-revision
       test "$revision" = "$(jq -r .priorState.git "$manifest")" || die retention-image-revision
       grep -Fxq "$resolved" <<<"$containers" && die retention-image-in-use
-      if test "$role" = server; then server_tags[-1]="$tag"; else sidecar_tags[-1]="$tag"; fi
+      if test "$role" = server; then MS_RETENTION_SERVER_TAGS[-1]="$tag"; else MS_RETENTION_SIDECAR_TAGS[-1]="$tag"; fi
     done
   done
   verify_prior_lease_locked
   verify_prior_checkpoint_locked
-  for index in "${!candidates[@]}"; do
-    test -z "${server_tags[$index]}" || docker image rm "${server_tags[$index]}" >/dev/null 2>&1 || true
-    test -z "${sidecar_tags[$index]}" || docker image rm "${sidecar_tags[$index]}" >/dev/null 2>&1 || true
-    rm -rf -- "${candidates[$index]}"
+}
+apply_retention_locked() {
+  local index
+  for index in "${!MS_RETENTION_CANDIDATES[@]}"; do
+    verify_prior_lease_locked
+    test -z "${MS_RETENTION_SERVER_TAGS[$index]}" || docker image rm "${MS_RETENTION_SERVER_TAGS[$index]}" >/dev/null 2>&1 || true
+    verify_prior_lease_locked
+    test -z "${MS_RETENTION_SIDECAR_TAGS[$index]}" || docker image rm "${MS_RETENTION_SIDECAR_TAGS[$index]}" >/dev/null 2>&1 || true
+    verify_prior_lease_locked
+    rm -rf -- "${MS_RETENTION_CANDIDATES[$index]}"
   done
 }
 cleanup_stale_lease_temps_locked() {
@@ -258,11 +265,17 @@ repair_retained_tags_locked() {
     for role in server sidecar; do
       tag="$(jq -r --arg role "$role" '.rollbackTags[$role] // empty' "$manifest")"; test -n "$tag" || continue
       expected="discord-music-rollback:$run_id-$role"; test "$tag" = "$expected" || die retention-tag-invalid
-      docker image inspect "$tag" >/dev/null 2>&1 && continue
+      verify_bound_lease_locked
+      if docker image inspect "$tag" >/dev/null 2>&1; then verify_bound_lease_locked; continue; fi
+      verify_bound_lease_locked
       source="$(jq -r --arg role "$role" '.priorState[($role+"Image")] // empty' "$manifest")"
       [[ "$source" =~ ^sha256:[0-9a-f]{64}$ ]] || die retention-source-invalid
+      verify_bound_lease_locked
       docker image inspect "$source" >/dev/null 2>&1 || die retention-source-missing
-      docker image tag "$source" "$tag"; repaired=$((repaired+1))
+      verify_bound_lease_locked
+      docker image tag "$source" "$tag"
+      verify_bound_lease_locked
+      repaired=$((repaired+1))
     done
   done
   printf '%s\n' "$repaired"
@@ -322,6 +335,98 @@ preflight() {
     --argjson trackedClean "$tracked_clean" --argjson managedLegacyConfig "$managed_legacy" \
     --arg lease "$lease_state" --arg restore "$restore_state" --arg snapshot "$after" \
     '{ok:true,readOnly:true,trackedClean:$trackedClean,managedLegacyConfig:$managedLegacyConfig,protectedConfig:true,sha:$sha,configHash:$configHash,lease:$lease,restoreState:$restore,writeSnapshot:$snapshot}'
+}
+commit_begin_run_locked() {
+  python3 - "$1" "$2" "$3" "$MS_LEASE" "$MS_COUNTER" "$MS_PRIOR_LEASE_ID" "$MS_PRIOR_LEASE_HASH" "$MS_PRIOR_CHECKPOINT_ID" "$MS_TEST_ROOT" 2>/dev/null <<'PY'
+import hashlib
+import os
+import shutil
+import stat
+import sys
+
+temp, run, prior_run, lease, counter, lease_id, lease_hash, checkpoint_id, test_root = sys.argv[1:]
+phase = os.environ.get("MEDIA_OWNER_TEST_REPLACE_PHASE", "") if test_root else ""
+replacement = os.environ.get("REPLACE_LEASE_WITH", "") if test_root else ""
+published = terminal_changed = counter_changed = False
+terminal = os.path.join(prior_run, "terminal.json") if prior_run else ""
+terminal_existed = bool(terminal and os.path.exists(terminal))
+terminal_old = open(terminal, "rb").read() if terminal_existed else b""
+counter_existed = os.path.exists(counter)
+counter_old = open(counter, "rb").read() if counter_existed else b""
+
+def identity(path):
+    value = os.lstat(path)
+    return f"{value.st_dev}:{value.st_ino}"
+
+def lease_matches():
+    if lease_id == "absent":
+        return not os.path.lexists(lease)
+    try:
+        value = os.lstat(lease)
+        if not stat.S_ISREG(value.st_mode) or identity(lease) != lease_id:
+            return False
+        with open(lease, "rb") as source:
+            return hashlib.sha256(source.read()).hexdigest() == lease_hash
+    except OSError:
+        return False
+
+def checkpoint_matches():
+    return checkpoint_id == "absent" or (os.path.isdir(prior_run) and identity(prior_run) == checkpoint_id)
+
+def write_atomic(path, value):
+    staged = f"{path}.transaction.{os.getpid()}"
+    with open(staged, "wb") as target:
+        target.write(value); target.flush(); os.fsync(target.fileno())
+    os.chmod(staged, 0o600)
+    os.replace(staged, path)
+
+def hook(name):
+    if phase != name or not replacement:
+        return
+    with open(replacement, "rb") as source:
+        write_atomic(lease, source.read())
+
+def rollback():
+    if counter_changed:
+        if counter_existed: write_atomic(counter, counter_old)
+        elif os.path.exists(counter): os.unlink(counter)
+    if terminal_changed:
+        if terminal_existed: write_atomic(terminal, terminal_old)
+        elif os.path.exists(terminal): os.unlink(terminal)
+    if published and os.path.isdir(run):
+        shutil.rmtree(run)
+    if os.path.isdir(temp):
+        shutil.rmtree(temp)
+
+try:
+    next_lease = open(os.path.join(temp, ".next-lease"), "rb").read()
+    next_counter = open(os.path.join(temp, ".next-counter"), "rb").read()
+    prior_terminal = open(os.path.join(temp, ".prior-terminal"), "rb").read() if prior_run else b""
+    for name in (".next-lease", ".next-counter", ".prior-terminal"):
+        path = os.path.join(temp, name)
+        if os.path.exists(path): os.unlink(path)
+    hook("temp-lease-write")
+    if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    os.replace(temp, run); published = True
+    hook("checkpoint-rename")
+    if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    if prior_run:
+        write_atomic(terminal, prior_terminal); terminal_changed = True
+        hook("terminal-archive")
+        if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    write_atomic(counter, next_counter); counter_changed = True
+    directory = os.open(os.path.dirname(counter), os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+    hook("counter-fsync")
+    if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    hook("final-rename")
+    if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    write_atomic(lease, next_lease)
+except Exception:
+    rollback()
+    raise
+PY
 }
 begin_run() {
   require_root; require_paths
@@ -384,19 +489,8 @@ begin_run() {
     test "$(sha256sum "$MS_BACKUP/$prior_id/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$prior_manifest")" || die prior-checkpoint-invalid
   fi
   cleanup_retention_locked "$prior_id"
-  cleanup_stale_lease_temps_locked true
-  if test -n "$prior_id"; then
-    verify_prior_lease_locked
-    verify_prior_checkpoint_locked
-    printf '%s' "$prior_lease" >"$MS_BACKUP/$prior_id/terminal.json.tmp"
-    sync -f "$MS_BACKUP/$prior_id/terminal.json.tmp"
-    mv -f "$MS_BACKUP/$prior_id/terminal.json.tmp" "$MS_BACKUP/$prior_id/terminal.json"
-    sync -f "$MS_BACKUP/$prior_id"
-    repair_retained_tags_locked >/dev/null
-  fi
   local generation random run_id temp run config working env_file state health cursor now deadline
   generation="$(test -r "$MS_COUNTER" && cat "$MS_COUNTER" || echo 0)"; [[ "$generation" =~ ^[0-9]+$ ]] || die counter-invalid; generation=$((generation+1))
-  printf '%s\n' "$generation" | atomic_file "$MS_COUNTER" 0600
   random="$(openssl rand -hex 16)"; run_id="$generation-$random"; temp="$MS_BACKUP/.$run_id.tmp"; run="$MS_BACKUP/$run_id"
   trap 'test -n "${temp:-}" && test -d "$temp" && rm -rf -- "$temp"' ERR
   mkdir -m 0700 "$temp"; config="$(active_config)"; working="$(dirname "$config")"; env_file="$working/.env"
@@ -411,12 +505,23 @@ begin_run() {
   chmod 0600 "$temp/manifest.json"; jq -e . "$temp/manifest.json" >/dev/null
   test "$(sha256sum "$temp/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$temp/manifest.json")"
   test "$(sha256sum "$temp/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$temp/manifest.json")"
-  sync -f "$temp/manifest.json"; sync -f "$temp"; mv "$temp" "$run"; sync -f "$MS_BACKUP"
+  sync -f "$temp/manifest.json"; sync -f "$temp"
   now="$(boottime)"; deadline=$((now+MS_DEADLINE_SECONDS))
   jq -cn --arg schema "$MS_SCHEMA" --arg runId "$run_id" --argjson generation "$generation" --arg selectedSha "$MS_SHA" \
     --argjson sequence 0 --argjson deadline "$deadline" --arg eventCursor "$cursor" \
-    '{schema:$schema,runId:$runId,generation:$generation,selectedSha:$selectedSha,sequence:$sequence,deadlineClock:"CLOCK_BOOTTIME",deadlineBoottime:$deadline,eventCursor:$eventCursor,state:"active",restoreState:"idle",stableSamples:0,lateDaemonDetected:false,reconcilePasses:0,eventProof:null,acceptedOperations:[],activeMutation:null}' | lease_write true
+    '{schema:$schema,runId:$runId,generation:$generation,selectedSha:$selectedSha,sequence:$sequence,deadlineClock:"CLOCK_BOOTTIME",deadlineBoottime:$deadline,eventCursor:$eventCursor,state:"active",restoreState:"idle",stableSamples:0,lateDaemonDetected:false,reconcilePasses:0,eventProof:null,acceptedOperations:[],activeMutation:null}' >"$temp/.next-lease"
+  printf '%s\n' "$generation" >"$temp/.next-counter"
+  printf '%s' "$prior_lease" >"$temp/.prior-terminal"
+  chmod 0600 "$temp/.next-lease" "$temp/.next-counter" "$temp/.prior-terminal"
+  sync -f "$temp/.next-lease"; sync -f "$temp/.next-counter"; sync -f "$temp/.prior-terminal"; sync -f "$temp"
+  verify_prior_lease_locked; verify_prior_checkpoint_locked
+  commit_begin_run_locked "$temp" "$run" "${prior_id:+$MS_BACKUP/$prior_id}" || die begin-transaction-failed
+  MS_PRIOR_LEASE_ID="$(stat -c %d:%i "$MS_LEASE")"; MS_PRIOR_LEASE_HASH="$(sha256sum "$MS_LEASE"|cut -d' ' -f1)"
+  MS_PRIOR_CHECKPOINT_ID=absent; MS_PRIOR_RUN_ID=""
   nohup setsid "$run/owner.sh" watchdog "$run_id" >/dev/null 2>&1 </dev/null 9>&- &
+  apply_retention_locked
+  cleanup_stale_lease_temps_locked true
+  repair_retained_tags_locked >/dev/null
   jq -cn --arg runId "$run_id" --argjson generation "$generation" '{ok:true,runId:$runId,generation:$generation,sequence:0,checkpointDurable:true,watchdogLaunched:true}'
 }
 cas_active() {
