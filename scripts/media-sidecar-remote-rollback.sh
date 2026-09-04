@@ -52,29 +52,58 @@ PY
 lease_value() { strict_json_file "$MS_LEASE" || die lease-json-invalid; jq -er "$1" "$MS_LEASE"; }
 lease_write() { atomic_file "$MS_LEASE" 0600; }
 cleanup_retention_locked() {
-  local current candidate run_id manifest terminal server_tag sidecar_tag
+  local current cutoff candidate modified run_id manifest terminal containers container image role tag source resolved revision
+  local -a candidates=() server_tags=() sidecar_tags=()
   if test -r "$MS_LEASE"; then
     strict_json_file "$MS_LEASE" || die lease-json-invalid
     current="$(jq -er .runId "$MS_LEASE")"
   else
     current=""
   fi
-  while IFS= read -r -d '' candidate; do
+  cutoff="$(date -d "$MS_RETENTION_DAYS days ago" +%s)" || die retention-cutoff-invalid
+  containers="$(docker ps -aq)" || die retention-container-list
+  while IFS= read -r container; do
+    test -n "$container" || continue
+    image="$(docker inspect -f '{{.Image}}' "$container")" || die retention-container-inspect
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || die retention-container-image
+    containers="${containers}"$'\n'"$image"
+  done <<<"$containers"
+  for candidate in "$MS_BACKUP"/*; do
+    test -d "$candidate" || continue
     run_id="${candidate##*/}"
     [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
     test "$run_id" != "$current" || continue
+    test ! -L "$candidate" || die retention-archive-invalid
+    modified="$(stat -c %Y "$candidate")" || die retention-archive-invalid
+    test "$modified" -lt "$cutoff" || continue
     manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
-    test -f "$manifest" && test -f "$terminal" || continue
-    strict_json_file "$manifest" && strict_json_file "$terminal" || die retention-json-invalid
-    jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '.schema==$schema and .runId==$runId and (.selectedSha|test("^[0-9a-f]{40}$"))' "$manifest" >/dev/null || continue
-    jq -e --arg runId "$run_id" '.runId==$runId and (.state=="committed" or (.state=="expired" and .restoreState=="restored"))' "$terminal" >/dev/null || continue
-    test "$(sha256sum "$candidate/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || continue
-    test "$(sha256sum "$candidate/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$manifest")" || continue
-    server_tag="$(jq -r '.rollbackTags.server // empty' "$manifest")"; sidecar_tag="$(jq -r '.rollbackTags.sidecar // empty' "$manifest")"
-    test -z "$server_tag" || docker image rm "$server_tag" >/dev/null 2>&1 || true
-    test -z "$sidecar_tag" || docker image rm "$sidecar_tag" >/dev/null 2>&1 || true
-    rm -rf -- "$candidate"
-  done < <(find "$MS_BACKUP" -mindepth 1 -maxdepth 1 -type d -mtime "+$MS_RETENTION_DAYS" -print0)
+    for file in "$manifest" "$terminal" "$candidate/compose.yaml" "$candidate/deploy.env"; do
+      test -f "$file" && test ! -L "$file" || die retention-archive-invalid
+    done
+    validate_cleanup_archive "$manifest" "$terminal" "$run_id" || die retention-archive-invalid
+    test "$(sha256sum "$candidate/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$manifest")" || die retention-archive-invalid
+    test "$(sha256sum "$candidate/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$manifest")" || die retention-archive-invalid
+    candidates+=("$candidate"); server_tags+=(""); sidecar_tags+=("")
+    for role in server sidecar; do
+      tag="$(jq -r --arg role "$role" '.rollbackTags[$role] // empty' "$manifest")"
+      test -n "$tag" || continue
+      source="$(jq -r --arg role "$role" '.priorState[($role+"Image")]' "$manifest")"
+      grep -Fxq "$source" <<<"$containers" && die retention-image-in-use
+      resolved="$(docker image inspect -f '{{.Id}}' "$tag" 2>/dev/null || true)"
+      test -n "$resolved" || continue
+      [[ "$resolved" =~ ^sha256:[0-9a-f]{64}$ ]] || die retention-image-invalid
+      test "$resolved" = "$source" || die retention-image-binding
+      revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$tag")" || die retention-image-revision
+      test "$revision" = "$(jq -r .priorState.git "$manifest")" || die retention-image-revision
+      grep -Fxq "$resolved" <<<"$containers" && die retention-image-in-use
+      if test "$role" = server; then server_tags[-1]="$tag"; else sidecar_tags[-1]="$tag"; fi
+    done
+  done
+  for index in "${!candidates[@]}"; do
+    test -z "${server_tags[$index]}" || docker image rm "${server_tags[$index]}" >/dev/null 2>&1 || true
+    test -z "${sidecar_tags[$index]}" || docker image rm "${sidecar_tags[$index]}" >/dev/null 2>&1 || true
+    rm -rf -- "${candidates[$index]}"
+  done
 }
 cleanup_stale_lease_temps_locked() {
   local candidate name pid now modified
@@ -223,6 +252,7 @@ begin_run() {
   test -e "$MS_LOCK" || install -m 0600 /dev/null "$MS_LOCK"
   test "$(stat -c %U:%G:%a "$MS_LOCK")" = root:root:600 || die lock-mode
   exec 9>"$MS_LOCK"; flock -x 9
+  cleanup_retention_locked
   cleanup_stale_lease_temps_locked
   if test -r "$MS_LEASE"; then
     local prior_state prior_restore prior_id
@@ -260,7 +290,6 @@ begin_run() {
     --argjson sequence 0 --argjson deadline "$deadline" --arg eventCursor "$cursor" \
     '{schema:$schema,runId:$runId,generation:$generation,selectedSha:$selectedSha,sequence:$sequence,deadlineClock:"CLOCK_BOOTTIME",deadlineBoottime:$deadline,eventCursor:$eventCursor,state:"active",restoreState:"idle",stableSamples:0,lateDaemonDetected:false,reconcilePasses:0,eventProof:null,acceptedOperations:[],activeMutation:null}' | lease_write
   nohup setsid "$run/owner.sh" watchdog "$run_id" >/dev/null 2>&1 </dev/null 9>&- &
-  cleanup_retention_locked
   jq -cn --arg runId "$run_id" --argjson generation "$generation" '{ok:true,runId:$runId,generation:$generation,sequence:0,checkpointDurable:true,watchdogLaunched:true}'
 }
 cas_active() {
