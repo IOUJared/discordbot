@@ -20,6 +20,7 @@ mod support;
 use std::{collections::BTreeSet, sync::atomic::Ordering, time::Duration};
 
 use search::SearchResponse;
+use serde_json::{Value, json};
 use support::{
     FakeServer, Manifest, RAW_FIXTURE, ResponsePlan, fixture_body, read_fixture, run_search,
 };
@@ -77,16 +78,120 @@ async fn malformed_renderer_keeps_raw_ordinal() {
         .await
         .expect("fixture search must succeed");
 
-    // Then: malformed zero consumes its slot and ordinal five is excluded.
-    assert_eq!(response.results[0].track.id, "valid-ordinal-1");
-    assert_eq!(response.results[0].score, 0.9);
-    assert_eq!(response.results.len(), 1);
+    // Then: malformed zero consumes its slot while every valid result through slot four remains.
+    let expected: SearchResponse =
+        serde_json::from_slice(&read_fixture("fixtures/responses/search-ordinal.json"))
+            .expect("expected response must be valid JSON");
+    assert_eq!(response, expected);
+    assert_eq!(
+        response
+            .results
+            .iter()
+            .map(|result| (result.track.id.as_str(), result.score))
+            .collect::<Vec<_>>(),
+        vec![
+            ("valid-ordinal-1", 0.9),
+            ("valid-ordinal-2", 0.8),
+            ("valid-ordinal-3", 0.7),
+            ("valid-ordinal-4", 0.6),
+        ]
+    );
     assert!(
         response
             .results
             .iter()
             .all(|result| result.track.id != "outside-window-5")
     );
+}
+
+#[tokio::test]
+async fn all_invalid_slots_return_no_results() {
+    // Given: every raw renderer in the bounded window is malformed.
+    let response = run_custom_search(vec![malformed_renderer(); 5]).await;
+
+    // When: the sidecar normalizes the renderer window.
+
+    // Then: no malformed candidate becomes a public result.
+    assert!(response.results.is_empty());
+}
+
+#[tokio::test]
+async fn mixed_valid_and_invalid_slots_keep_original_ordinals() {
+    // Given: malformed renderer slots interleave three valid renderers.
+    let response = run_custom_search(vec![
+        malformed_renderer(),
+        valid_renderer("valid-1"),
+        malformed_renderer(),
+        valid_renderer("valid-3"),
+        valid_renderer("valid-4"),
+    ])
+    .await;
+
+    // When: the sidecar normalizes the raw renderer window.
+
+    // Then: valid results retain source order and the scores of their raw slots.
+    assert_eq!(
+        response
+            .results
+            .iter()
+            .map(|result| (result.track.id.as_str(), result.score))
+            .collect::<Vec<_>>(),
+        vec![("valid-1", 0.9), ("valid-3", 0.7), ("valid-4", 0.6)]
+    );
+}
+
+#[tokio::test]
+async fn slot_four_is_included_and_slot_five_is_excluded() {
+    // Given: six syntactically valid raw renderers.
+    let response = run_custom_search(
+        (0..6)
+            .map(|ordinal| valid_renderer(&format!("slot-{ordinal}")))
+            .collect(),
+    )
+    .await;
+
+    // When: the sidecar applies its fixed five-renderer bound.
+
+    // Then: slot four remains and slot five never enters the response.
+    assert_eq!(response.results.len(), 5);
+    assert_eq!(response.results[4].track.id, "slot-4");
+    assert_eq!(response.results[4].score, 0.6);
+    assert!(
+        response
+            .results
+            .iter()
+            .all(|result| result.track.id != "slot-5")
+    );
+}
+
+async fn run_custom_search(renderers: Vec<Value>) -> SearchResponse {
+    let body = serde_json::to_vec(&json!({
+        "contents": renderers
+            .into_iter()
+            .map(|video_renderer| json!({ "videoRenderer": video_renderer }))
+            .collect::<Vec<_>>(),
+    }))
+    .expect("custom response body must serialize");
+    let server = FakeServer::spawn(ResponsePlan::Body(body), 1)
+        .await
+        .expect("fake server must bind");
+    run_search(&server)
+        .await
+        .expect("custom fixture search must succeed")
+}
+
+fn malformed_renderer() -> Value {
+    json!({ "videoId": 7, "title": { "runs": [{ "text": "Malformed" }] } })
+}
+
+fn valid_renderer(id: &str) -> Value {
+    json!({
+        "videoId": id,
+        "title": { "runs": [{ "text": id }] },
+        "ownerText": { "runs": [{ "text": "Artist" }] },
+        "lengthText": { "simpleText": "1:00" },
+        "thumbnail": { "thumbnails": [{ "url": format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg") }] },
+    })
 }
 
 #[test]

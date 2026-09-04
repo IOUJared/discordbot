@@ -49,8 +49,7 @@ pub(super) fn parse_response(body: &[u8]) -> Result<SearchResponse, SearchError>
     let results = candidates
         .into_iter()
         .enumerate()
-        .find_map(|(ordinal, candidate)| normalize_renderer(candidate, ordinal))
-        .into_iter()
+        .filter_map(|(ordinal, candidate)| normalize_renderer(candidate, ordinal))
         .collect();
     Ok(SearchResponse {
         version: crate::model::API_VERSION,
