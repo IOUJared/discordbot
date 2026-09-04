@@ -17,7 +17,7 @@ if test "$VERIFY_MODE" = inspect; then
   test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.deno.asset-sha256"}}' "$image")" = 8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530
   test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.extractor.proxy"}}' "$image")" = direct-empty
   test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.extractor.js-runtime"}}' "$image")" = deno:/usr/local/bin/deno
-  test "$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image" | cut -d= -f1 | sort | paste -sd, -)" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR
+  test "$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image" | awk -F= 'NF { print $1 }' | sort | paste -sd, -)" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR
   stage=production-processes
   docker exec "$sidecar" sh -ceu '
 test "$(cat /proc/1/comm)" = tini
@@ -71,7 +71,7 @@ test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.deno.a
 stage=history-clean
 docker image history --no-trunc "discord-music-media-sidecar:qa-$CHECKPOINT_SHA" >"$raw"
 ! grep -Eqi '(authorization:|bearer[[:space:]]|begin [a-z ]*private key|authorized_keys|(^|[/ ])cookies?([^a-z]|$)|(^|[/ ])\.env([^a-z]|$))' "$raw"
-test "$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA" | cut -d= -f1 | sort | paste -sd, -)" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR
+test "$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA" | awk -F= 'NF { print $1 }' | sort | paste -sd, -)" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR
 test -z "$(docker port "$sidecar")"; stage=private-health
 docker exec "$probe" node -e "fetch('http://media-sidecar:3101/healthz').then(async r=>{if(r.status!==200||JSON.stringify(await r.json())!=='{\"version\":1,\"status\":\"ok\"}')process.exit(1)})" >"$raw" 2>&1
 stage=sidecar-runtime
