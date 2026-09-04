@@ -9,7 +9,7 @@ readonly MS_BACKUP="${MEDIA_BACKUP_ROOT:-/root/discord-music-rollbacks}"
 readonly MS_LOCK="${MEDIA_LOCK_FILE:-/run/lock/discord-music-deploy.lock}"
 readonly MS_LEASE="${MEDIA_LEASE_FILE:-$MS_BACKUP/active.json}"
 readonly MS_COUNTER="${MEDIA_RUN_COUNTER:-$MS_BACKUP/run-counter}"
-readonly MS_PROJECT="${MEDIA_COMPOSE_PROJECT:-deploy}"
+readonly MS_PROJECT="${MEDIA_COMPOSE_PROJECT:-}"
 readonly MS_SHA="${MEDIA_SELECTED_SHA:-}"
 readonly MS_OWNER_B64="${MEDIA_OWNER_B64:-}"
 readonly MS_DEADLINE_SECONDS="${MEDIA_DEADLINE_SECONDS:-600}"
@@ -239,8 +239,22 @@ cas_active() {
   now="$(boottime)"; test "$now" -lt "$(lease_value .deadlineBoottime)" || die lease-deadline
 }
 lease_replace() { local filter="$1"; jq "$filter" "$MS_LEASE" | lease_write; }
+build_binding() {
+  local run_id="$1" sequence="$2" operation="$3" manifest="$4"
+  test "$MS_PROJECT" = deploy || die build-project
+  [[ "$MS_SHA" =~ ^[0-9a-f]{40}$ ]] || die build-selected-sha
+  jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$MS_SHA" \
+    '.schema==$schema and .runId==$runId and .selectedSha==$sha' "$manifest" >/dev/null || die build-manifest-binding
+  test "$(lease_value .runId)" = "$run_id" || die build-run
+  test "$(lease_value .selectedSha)" = "$MS_SHA" || die build-lease-sha
+  test "$(lease_value .state)" = active || die build-state
+  test "$(lease_value .sequence)" -eq "$sequence" || die build-sequence
+  test "$(lease_value .activeMutation.operation)" = "$operation" || die build-operation
+  test "$(lease_value .activeMutation.sequence)" -eq "$sequence" || die build-operation-sequence
+}
 build_image() {
-  local role="$1" tree before
+  local role="$1" run_id="$2" sequence="$3" operation="$4" manifest="$5" tree before
+  build_binding "$run_id" "$sequence" "$operation" "$manifest"
   tree="$(git -C "$MS_REPO" rev-parse 'HEAD^{tree}')"; before="$run/images-before-build-$role"
   docker images -q --no-trunc | sort -u >"$before"; chmod 0600 "$before"; sync -f "$before"
   case "$role" in
@@ -275,11 +289,11 @@ perform() {
       test -z "$(git -C "$MS_REPO" status --porcelain --untracked-files=all)"
       ;;
     build)
-      build_image server
-      build_image sidecar
+      build_image server "$run_id" "$sequence" "$operation" "$manifest"
+      build_image sidecar "$run_id" "$sequence" "$operation" "$manifest"
       ;;
-    build-server) build_image server;;
-    build-sidecar) build_image sidecar;;
+    build-server) build_image server "$run_id" "$sequence" "$operation" "$manifest";;
+    build-sidecar) build_image sidecar "$run_id" "$sequence" "$operation" "$manifest";;
     configure-shadow|configure-rust|configure-disabled)
       local mode="${operation#configure-}" env_temp="${working}/.env.run-$run_id"
       awk -v mode="$mode" -v sha="$MS_SHA" 'BEGIN{modeDone=0;shaDone=0} /^MEDIA_SIDECAR_MODE=/{if(!modeDone){print "MEDIA_SIDECAR_MODE=" mode;modeDone=1}next} /^DEPLOY_SHA=/{if(!shaDone){print "DEPLOY_SHA=" sha;shaDone=1}next} {print} END{if(!modeDone)print "MEDIA_SIDECAR_MODE=" mode;if(!shaDone)print "DEPLOY_SHA=" sha}' "$working/.env" >"$env_temp"
@@ -363,6 +377,7 @@ perform() {
 mutate() {
   local run_id="$1" expected="$2" operation="$3" next run log payload pid status
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"
+  jq -e '.activeMutation == null' "$MS_LEASE" >/dev/null || die active-operation
   next=$((expected+1)); run="$MS_BACKUP/$run_id"; mkdir -p "$run/operations"; chmod 0700 "$run/operations"
   log="$run/operations/$next.log"; payload="$run/operations/$next.input"
   : >"$log"; chmod 0600 "$log"; cat >"$payload"; chmod 0600 "$payload"; sync -f "$payload"

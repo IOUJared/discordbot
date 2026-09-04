@@ -104,6 +104,7 @@ export class RemoteClient {
       MEDIA_LEASE_FILE: this.lease,
       MEDIA_RUN_COUNTER: this.counter,
       MEDIA_SELECTED_SHA: sha,
+      MEDIA_COMPOSE_PROJECT: "deploy",
       ...extra,
     }
   }
