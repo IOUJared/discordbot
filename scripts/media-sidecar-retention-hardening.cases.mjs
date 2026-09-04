@@ -180,7 +180,7 @@ test("retention keeps current, recent, and seven-day-boundary archives", () => {
     const current = fixture.addArchive({ generation: 2 })
     const recent = fixture.addArchive({ generation: 3, ageMs: 60_000 })
     const boundary = fixture.addArchive({ generation: 4, ageMs: 7 * 86_400_000 - 2_000 })
-    fixture.write(fixture.lease, JSON.stringify({ runId: current.runId }))
+    fixture.setLease(current)
     const result = fixture.invoke()
     assert.equal(result.status, 0, result.stderr)
     assert.equal(fixture.exists(expired.run), false)

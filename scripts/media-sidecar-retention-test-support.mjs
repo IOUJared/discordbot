@@ -25,25 +25,49 @@ export function withRetentionFixture(callback) {
   const bin = join(fixture, "bin")
   const lock = join(fixture, "owner.lock")
   const lease = join(backup, "active.json")
+  const counter = join(backup, "run-counter")
+  const deploy = join(repo, "deploy")
+  const config = join(deploy, "compose.yaml")
+  const envFile = join(deploy, ".env")
+  const stateJson = join(fixture, "state.json")
+  const volumeMarker = join(fixture, "volume-state")
   const dockerState = join(fixture, "docker-state.tsv")
   const dockerMutations = join(fixture, "docker-mutations.log")
   const injectionMarker = join(fixture, "injected")
   const ownerPath = join(fixture, "owner.sh")
-  for (const path of [backup, repo, bin]) mkdirSync(path, { recursive: true })
-  for (const path of [lock, dockerState, dockerMutations]) writeFileSync(path, "unchanged\n")
-  writeFileSync(lease, JSON.stringify({ runId: `99-${hex("9", 32)}` }))
+  for (const path of [backup, deploy, bin]) mkdirSync(path, { recursive: true })
+  for (const path of [lock, dockerState, dockerMutations, volumeMarker])
+    writeFileSync(path, "unchanged\n")
+  writeFileSync(counter, "99\n")
+  writeFileSync(config, "services: {}\n")
+  writeFileSync(envFile, "MEDIA_SIDECAR_MODE=rust\n")
+  writeFileSync(
+    stateJson,
+    JSON.stringify({
+      configHash: hex("1", 64),
+      envHash: hex("2", 64),
+      git: hex("3", 40),
+      mode: "rust",
+      serverImage: `sha256:${hex("4", 64)}`,
+      sidecarImage: `sha256:${hex("5", 64)}`,
+      serverRef: `discord-music-server:${hex("3", 40)}`,
+      sidecarRef: `discord-music-media-sidecar:${hex("3", 40)}`,
+      sidecarPresent: true,
+      publicHealth: { status: "ok", discord: "ready", voice: "idle", uptimeType: "number" },
+      volumes: [{ name: "discord-data", destination: "/app/data" }],
+    }),
+  )
 
   const dispatch = owner.indexOf(['case "', "$", '{1:-}" in'].join(""))
   const injected = `
 require_root() { :; }
 require_paths() { :; }
-begin_run() {
-  require_root
-  require_paths
-  exec 9>"$MS_LOCK"
-  flock -x 9
-  cleanup_retention_locked
+stat() {
+  if test "$*" = "-c %U:%G:%a $MS_LOCK"; then printf 'root:root:600\n'; else command stat "$@"; fi
 }
+active_config() { printf '%s' "$TEST_CONFIG"; }
+state_json() { command cat "$TEST_STATE_JSON"; }
+public_health() { printf '%s\n' '{"status":"ok","discord":"ready","voice":"idle","uptime":10}'; }
 `
   writeFileSync(ownerPath, `${owner.slice(0, dispatch)}${injected}${owner.slice(dispatch)}`)
   chmodSync(ownerPath, 0o700)
@@ -63,13 +87,14 @@ if test "$1" = inspect; then
   exit 0
 fi
 if test "$1 $2" = 'image inspect'; then
-  format="$4"; target="$5"
+  if test "$3" = -f; then format="$4"; target="$5"; else target="$3"; format=exists; fi
   row="$(awk -F '\\t' -v target="$target" '$1==target {print; exit}' "$state")"
   test -n "$row" || exit 1
   id="$(printf '%s' "$row" | cut -f2)"; revision="$(printf '%s' "$row" | cut -f3)"
   if test "${"$"}{TAG_MISMATCH:-0}" = 1 && case "$target" in *-server) true;; *) false;; esac; then id="sha256:${hex("f", 64)}"; fi
   test "${"$"}{WRONG_REVISION:-0}" != 1 || revision="${hex("e", 40)}"
   case "$format" in
+    exists) : ;;
     '{{.Id}}') printf '%s\\n' "$id" ;;
     '{{index .Config.Labels "org.opencontainers.image.revision"}}') printf '%s\\n' "$revision" ;;
     *) exit 1 ;;
@@ -85,7 +110,7 @@ exit 1
   )
   chmodSync(join(bin, "docker"), 0o700)
 
-  const addArchive = ({ generation, state = "committed", ageMs = 8 * day }) => {
+  const addArchive = ({ generation, state = "committed", restoreState, ageMs = 8 * day }) => {
     const runId = `${generation}-${hex(String(generation % 10), 32)}`
     const run = join(backup, runId)
     const compose = "services: {}\n"
@@ -128,7 +153,7 @@ exit 1
       priorPublicHealth: { status: "ok", discord: "ready", voice: "idle", uptime: 10 },
       rollbackTags: { server: serverTag, sidecar: sidecarTag },
     }
-    const restored = state === "expired"
+    const restored = state === "expired" && (restoreState ?? "restored") === "restored"
     const terminal = {
       schema: manifest.schema,
       runId,
@@ -139,7 +164,7 @@ exit 1
       deadlineBoottime: 100,
       eventCursor: manifest.eventCursor,
       state,
-      restoreState: restored ? "restored" : "idle",
+      restoreState: restoreState ?? (restored ? "restored" : "idle"),
       stableSamples: restored ? 2 : 0,
       lateDaemonDetected: false,
       reconcilePasses: 0,
@@ -164,6 +189,12 @@ exit 1
     utimesSync(run, old, old)
     return { manifest, terminal, run, runId, serverImage }
   }
+  const setLease = (archive, mutate = () => {}) => {
+    const value = structuredClone(archive.terminal)
+    mutate(value)
+    writeFileSync(lease, JSON.stringify(value))
+    return value
+  }
   const invoke = (environment = {}) =>
     spawnSync("bash", [ownerPath, "begin-run"], {
       encoding: "utf8",
@@ -173,19 +204,33 @@ exit 1
         MEDIA_LEASE_FILE: lease,
         MEDIA_LOCK_FILE: lock,
         MEDIA_REPO: repo,
+        MEDIA_RUN_COUNTER: counter,
+        MEDIA_SELECTED_SHA: hex("8", 40),
+        MEDIA_OWNER_B64: Buffer.from("#!/usr/bin/env bash\nexit 0\n").toString("base64"),
+        TEST_CONFIG: config,
+        TEST_STATE_JSON: stateJson,
         DOCKER_STATE: dockerState,
         DOCKER_MUTATIONS: dockerMutations,
         PATH: `${bin}:${process.env.PATH}`,
         ...environment,
       },
     })
+  const initialCurrent = addArchive({ generation: 99, ageMs: 60_000 })
+  setLease(initialCurrent)
   try {
     callback({
       addArchive,
+      backup,
+      config,
+      counter,
       dockerMutations,
+      envFile,
       injectionMarker,
+      initialCurrent,
       invoke,
       lease,
+      setLease,
+      volumeMarker,
       exists: existsSync,
       read: (path) => readFileSync(path, "utf8"),
       write: (path, value) => writeFileSync(path, value),

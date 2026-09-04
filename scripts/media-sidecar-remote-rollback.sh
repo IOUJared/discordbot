@@ -52,14 +52,8 @@ PY
 lease_value() { strict_json_file "$MS_LEASE" || die lease-json-invalid; jq -er "$1" "$MS_LEASE"; }
 lease_write() { atomic_file "$MS_LEASE" 0600; }
 cleanup_retention_locked() {
-  local current cutoff candidate modified run_id manifest terminal containers container image role tag source resolved revision
+  local current="${1:-}" cutoff candidate modified run_id manifest terminal containers container image role tag source resolved revision
   local -a candidates=() server_tags=() sidecar_tags=()
-  if test -r "$MS_LEASE"; then
-    strict_json_file "$MS_LEASE" || die lease-json-invalid
-    current="$(jq -er .runId "$MS_LEASE")"
-  else
-    current=""
-  fi
   cutoff="$(date -d "$MS_RETENTION_DAYS days ago" +%s)" || die retention-cutoff-invalid
   containers="$(docker ps -aq)" || die retention-container-list
   while IFS= read -r container; do
@@ -106,8 +100,8 @@ cleanup_retention_locked() {
   done
 }
 cleanup_stale_lease_temps_locked() {
-  local candidate name pid now modified
-  if test -r "$MS_LEASE"; then
+  local lease_validated="${1:-false}" candidate name pid now modified
+  if test "$lease_validated" != true && test -r "$MS_LEASE"; then
     strict_json_file "$MS_LEASE" || die lease-json-invalid
     jq -e '(.state != "active") and (.restoreState != "restoring") and (.activeMutation == null)' "$MS_LEASE" >/dev/null || return 0
   fi
@@ -252,16 +246,45 @@ begin_run() {
   test -e "$MS_LOCK" || install -m 0600 /dev/null "$MS_LOCK"
   test "$(stat -c %U:%G:%a "$MS_LOCK")" = root:root:600 || die lock-mode
   exec 9>"$MS_LOCK"; flock -x 9
-  cleanup_retention_locked
-  cleanup_stale_lease_temps_locked
+  local prior_state="" prior_restore="" prior_id="" prior_manifest="" prior_lease=""
   if test -r "$MS_LEASE"; then
-    local prior_state prior_restore prior_id
-    prior_state="$(lease_value .state)"; prior_restore="$(lease_value .restoreState)"
+    local prior_projection
+    prior_lease="$(command cat "$MS_LEASE" && printf x)" || die lease-read-invalid
+    prior_lease="${prior_lease%x}"
+    strict_json_file <(printf '%s' "$prior_lease") || die lease-json-invalid
+    prior_projection="$(jq -er --arg schema "$MS_SCHEMA" '
+      if type == "object"
+        and (.schema == $schema)
+        and (.runId | type == "string" and test("^[1-9][0-9]*-[0-9a-f]{32}$"))
+        and (.generation | type == "number" and floor == . and . >= 1)
+        and (.selectedSha | type == "string" and test("^[0-9a-f]{40}$"))
+        and (.state | type == "string")
+        and (.restoreState | type == "string")
+      then [.runId, .state, .restoreState] | @tsv
+      else error("invalid lease discriminator")
+      end
+    ' <<<"$prior_lease")" || die lease-schema-invalid
+    IFS=$'\t' read -r prior_id prior_state prior_restore <<<"$prior_projection"
     test "$prior_state" != active || die active-run-exists
+    test "$prior_restore" != fencing && test "$prior_restore" != restoring || die restoration-incomplete
     test "$prior_state" != expired || test "$prior_restore" = restored || die restoration-incomplete
-    prior_id="$(lease_value .runId)"
-    test -d "$MS_BACKUP/$prior_id" || die prior-checkpoint-missing
-    cp -p "$MS_LEASE" "$MS_BACKUP/$prior_id/terminal.json.tmp"
+    case "$prior_state:$prior_restore" in
+      committed:idle|expired:restored) ;;
+      *) die prior-lease-state;;
+    esac
+    prior_manifest="$MS_BACKUP/$prior_id/manifest.json"
+    test -f "$prior_manifest" && test ! -L "$prior_manifest" || die prior-checkpoint-missing
+    validate_cleanup_archive "$prior_manifest" <(printf '%s' "$prior_lease") "$prior_id" || die prior-checkpoint-invalid
+    for file in "$MS_BACKUP/$prior_id/compose.yaml" "$MS_BACKUP/$prior_id/deploy.env"; do
+      test -f "$file" && test ! -L "$file" || die prior-checkpoint-invalid
+    done
+    test "$(sha256sum "$MS_BACKUP/$prior_id/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$prior_manifest")" || die prior-checkpoint-invalid
+    test "$(sha256sum "$MS_BACKUP/$prior_id/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$prior_manifest")" || die prior-checkpoint-invalid
+  fi
+  cleanup_retention_locked "$prior_id"
+  cleanup_stale_lease_temps_locked true
+  if test -n "$prior_id"; then
+    printf '%s' "$prior_lease" >"$MS_BACKUP/$prior_id/terminal.json.tmp"
     sync -f "$MS_BACKUP/$prior_id/terminal.json.tmp"
     mv -f "$MS_BACKUP/$prior_id/terminal.json.tmp" "$MS_BACKUP/$prior_id/terminal.json"
     sync -f "$MS_BACKUP/$prior_id"
