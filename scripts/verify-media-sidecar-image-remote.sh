@@ -4,8 +4,13 @@ if test "$VERIFY_MODE" = inspect; then
   stage=production-container
   failure() { printf 'failure_stage=%s\n' "$stage"; }
   trap failure ERR
-  cd "$PRODUCTION_REPO"
-  sidecar="$(docker compose ps -q media-sidecar)"
+  server="$(docker ps -q --filter label=com.docker.compose.project=deploy --filter label=com.docker.compose.service=server | head -1)"
+  test -n "$server"
+  project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$server")"
+  config="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$server")"
+  test "$project" = deploy
+  test "$config" = "$PRODUCTION_REPO/deploy/compose.yaml"
+  sidecar="$(docker compose -p "$project" -f "$config" ps -q media-sidecar)"
   test -n "$sidecar"
   test "$(docker inspect -f '{{.State.Running}}' "$sidecar")" = true
   test "$(docker inspect -f '{{.State.Health.Status}}' "$sidecar")" = healthy
@@ -30,7 +35,7 @@ test "$(/usr/local/bin/yt-dlp --version)" = 2026.08.19
 /usr/local/bin/deno --version | grep -F "deno 2.9.5" >/dev/null
 ! command -v node; ! command -v bun; ! command -v qjs; ! command -v ffmpeg'
   for attempt in $(seq 1 20); do
-    process_state="$(docker top "$sidecar" -eo stat,comm | awk 'NR > 1 { count++; if ($1 ~ /^Z/) zombie=1 } END { printf "%s:%s", count, zombie + 0 }')"
+    process_state="$(docker top "$sidecar" -eo pid,stat,comm | awk 'NR > 1 { count++; if ($2 ~ /^Z/) zombie=1 } END { printf "%s:%s", count, zombie + 0 }')"
     test "$process_state" = 2:0 && break
     sleep 0.1
   done
