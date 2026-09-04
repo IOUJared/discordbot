@@ -258,8 +258,9 @@ YAML
     stop-sidecar) docker compose -p "$MS_PROJECT" -f "$config" stop media-sidecar;;
     start-sidecar) docker compose -p "$MS_PROJECT" -f "$config" up -d media-sidecar;;
     benchmark-live|benchmark-fallback|benchmark-disabled|benchmark-fresh)
-      local kind="${operation#benchmark-}" raw="$run/benchmark-$sequence.private.json" rustlog="$run/benchmark-$sequence.rust.jsonl" since result correlations rust_success upstream_success probe
+      local kind="${operation#benchmark-}" raw="$run/benchmark-$sequence.private.json" rustlog="$run/benchmark-$sequence.rust.jsonl" since result correlations rust_success upstream_success probe node_probe
       probe='{"healthStatus":0,"searchStatus":0,"resultCount":0}'
+      node_probe='{"dnsCount":0,"healthStatus":0,"searchStatus":0,"resultCount":0,"failure":"not_run"}'
       if test "$kind" = live; then
         probe="$(docker exec "${MS_PROJECT}-media-sidecar-1" deno eval '
           const health = await fetch("http://127.0.0.1:3101/healthz")
@@ -272,6 +273,20 @@ YAML
           console.log(JSON.stringify({healthStatus:health.status,searchStatus:search.status,resultCount:Array.isArray(body.results)?body.results.length:0}))
         ')"
         probe="$(jq -ce '{healthStatus,searchStatus,resultCount}' <<<"$probe")"
+        node_probe="$(docker exec discord-music node --input-type=module -e '
+          let dnsCount=0, healthStatus=0, searchStatus=0, resultCount=0, failure="none"
+          try { dnsCount=(await import("node:dns/promises")).resolve4("media-sidecar").then((items)=>items.length).catch(()=>0); dnsCount=await dnsCount } catch { failure="dns" }
+          try {
+            const health=await fetch("http://media-sidecar:3101/healthz",{signal:AbortSignal.timeout(5000)})
+            healthStatus=health.status
+            const search=await fetch("http://media-sidecar:3101/v1/search",{method:"POST",headers:{"content-type":"application/json","x-media-sidecar-correlation-id":"00000000-0000-4000-8000-000000000001"},body:JSON.stringify({version:1,query:"never gonna give you up official video node probe"}),signal:AbortSignal.timeout(5000)})
+            searchStatus=search.status
+            const body=await search.json().catch(()=>({}))
+            resultCount=Array.isArray(body.results)?body.results.length:0
+          } catch { failure="transport" }
+          console.log(JSON.stringify({dnsCount,healthStatus,searchStatus,resultCount,failure}))
+        ')"
+        node_probe="$(jq -ce '{dnsCount,healthStatus,searchStatus,resultCount,failure}' <<<"$node_probe")"
       fi
       since="$(date --iso-8601=seconds)"
       docker exec -i -e "MEDIA_BENCH_KIND=$kind" -e "MEDIA_BENCH_RUN=$run_id" discord-music node --input-type=module - >"$raw"
@@ -282,8 +297,8 @@ YAML
         chmod 0600 "$rustlog"
         rust_success="$(jq -s --argjson ids "$correlations" '[.[]|select(.stage=="rust_handler" and .outcome=="success" and (.correlationId as $id|$ids|index($id)))]|length' "$rustlog")"
         upstream_success="$(jq -s --argjson ids "$correlations" '[.[]|select(.stage=="innertube_upstream" and .outcome=="success" and (.correlationId as $id|$ids|index($id)))]|length' "$rustlog")"
-        result="$(jq -c --argjson rust "$rust_success" --argjson upstream "$upstream_success" --argjson probe "$probe" '.uncached.rust=$rust | .uncached.upstream=$upstream | .probe=$probe' <<<"$result")"
-        jq -e '.probe.healthStatus==200 and .probe.searchStatus==200 and .probe.resultCount>0 and .warmups==30 and .uniqueAcceptance==40 and .nonEmptyResults==40 and .disjointKeys and .uncached.node==40 and .uncached.clientSent==40 and .uncached.clientSuccess==40 and .uncached.rust==40 and .uncached.upstream==40 and .uncached.inMemoryIdMatch==40 and .uncached.local==0 and .uncached.fallback==0 and .uncached.p95Ms<1000 and .replay.node==40 and .replay.rust==0 and .replay.upstream==0 and .replay.local==0 and .replay.fallback==0 and .replay.p95Ms<10 and .idsEqual and .fingerprintsValid and .fingerprintCount==40 and .resolve.observed and .internalState=="ready" and .errors==0' <<<"$result" >/dev/null
+        result="$(jq -c --argjson rust "$rust_success" --argjson upstream "$upstream_success" --argjson probe "$probe" --argjson nodeProbe "$node_probe" '.uncached.rust=$rust | .uncached.upstream=$upstream | .probe=$probe | .nodeProbe=$nodeProbe' <<<"$result")"
+        jq -e '.probe.healthStatus==200 and .probe.searchStatus==200 and .probe.resultCount>0 and .nodeProbe.dnsCount>0 and .nodeProbe.healthStatus==200 and .nodeProbe.searchStatus==200 and .nodeProbe.resultCount>0 and .nodeProbe.failure=="none" and .warmups==30 and .uniqueAcceptance==40 and .nonEmptyResults==40 and .disjointKeys and .uncached.node==40 and .uncached.clientSent==40 and .uncached.clientSuccess==40 and .uncached.rust==40 and .uncached.upstream==40 and .uncached.inMemoryIdMatch==40 and .uncached.local==0 and .uncached.fallback==0 and .uncached.p95Ms<1000 and .replay.node==40 and .replay.rust==0 and .replay.upstream==0 and .replay.local==0 and .replay.fallback==0 and .replay.p95Ms<10 and .idsEqual and .fingerprintsValid and .fingerprintCount==40 and .resolve.observed and .internalState=="ready" and .errors==0' <<<"$result" >/dev/null
       elif test "$kind" = fallback; then jq -e '.node==1 and .rust==1 and .local==1 and .fallback==1 and .resultCount>0' <<<"$result" >/dev/null
       elif test "$kind" = disabled; then jq -e '.node==1 and .rust==0 and .local==1 and .fallback==0 and .resultCount>0 and .internalState=="disabled"' <<<"$result" >/dev/null
       else jq -e '.node==1 and .rust==1 and .local==0 and .fallback==0 and .resultCount>0 and .durationMs<1000 and .internalState=="ready"' <<<"$result" >/dev/null
