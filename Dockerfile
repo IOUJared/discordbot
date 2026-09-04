@@ -12,6 +12,10 @@ COPY packages/contracts packages/contracts
 RUN pnpm --filter @discord-music/server... build
 
 FROM node:24-alpine AS runtime
+ARG BUILD_SHA=0000000000000000000000000000000000000000
+ARG BUILD_TREE=0000000000000000000000000000000000000000
+LABEL org.opencontainers.image.revision=$BUILD_SHA \
+      io.discord-music.source-tree=$BUILD_TREE
 RUN apk add --no-cache ffmpeg tini yt-dlp
 WORKDIR /app
 ENV NODE_ENV=production

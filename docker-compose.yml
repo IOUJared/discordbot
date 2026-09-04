@@ -3,10 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BUILD_SHA: ${DEPLOY_SHA:-0000000000000000000000000000000000000000}
+        BUILD_TREE: ${DEPLOY_TREE:-0000000000000000000000000000000000000000}
     env_file: .env
     environment:
       DATABASE_PATH: /data/discord-music.sqlite
       HOST: 0.0.0.0
+      MEDIA_SIDECAR_URL: http://media-sidecar:3101
       PORT: 3000
     volumes:
       - music-data:/data
@@ -20,6 +24,27 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  media-sidecar:
+    image: discord-music-media-sidecar:${DEPLOY_SHA:-development}
+    build:
+      context: .
+      dockerfile: Dockerfile.media-sidecar
+      args:
+        BUILD_SHA: ${DEPLOY_SHA:-0000000000000000000000000000000000000000}
+        BUILD_TREE: ${DEPLOY_TREE:-0000000000000000000000000000000000000000}
+    environment:
+      SIDECAR_HOST: 0.0.0.0
+      SIDECAR_PORT: 3101
+    expose:
+      - "3101"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "deno", "eval", "--allow-net=127.0.0.1:3101", "const r=await fetch('http://127.0.0.1:3101/healthz');if(r.status!==200)Deno.exit(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   dashboard:
     build:

@@ -1,0 +1,30 @@
+services:
+  media-sidecar:
+    image: discord-music-media-sidecar:qa-${CHECKPOINT_SHA:?CHECKPOINT_SHA is required}
+    build:
+      context: .
+      dockerfile: Dockerfile.media-sidecar
+      args:
+        BUILD_SHA: ${CHECKPOINT_SHA:?CHECKPOINT_SHA is required}
+        BUILD_TREE: ${CHECKPOINT_TREE:?CHECKPOINT_TREE is required}
+    environment:
+      SIDECAR_HOST: 0.0.0.0
+      SIDECAR_PORT: 3101
+    expose:
+      - "3101"
+    healthcheck:
+      test: ["CMD", "deno", "eval", "--allow-net=127.0.0.1:3101", "const r=await fetch('http://127.0.0.1:3101/healthz');if(r.status!==200)Deno.exit(1)"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  probe:
+    image: discord-music-node:qa-${CHECKPOINT_SHA:?CHECKPOINT_SHA is required}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_SHA: ${CHECKPOINT_SHA:?CHECKPOINT_SHA is required}
+        BUILD_TREE: ${CHECKPOINT_TREE:?CHECKPOINT_TREE is required}
+    command: ["node", "-e", "setInterval(()=>{},2147483647)"]

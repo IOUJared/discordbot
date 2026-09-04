@@ -1,10 +1,14 @@
 .git
 .github
 .omo
+**/.omo/evidence/
+secrets/
+**/secrets/
 node_modules
 **/node_modules
 **/dist
 **/build
+**/target/
 **/.svelte-kit
 **/test-results
 coverage
@@ -14,3 +18,5 @@ coverage
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*cookies*
+*.bundle

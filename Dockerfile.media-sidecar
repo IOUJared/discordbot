@@ -1,0 +1,55 @@
+FROM rust:1.98.0-bookworm@sha256:e536cf316987faedfe8ae120f83b70c7df0068fdb4fc9efcce55c71a625001d5 AS build
+ARG BUILD_SHA=0000000000000000000000000000000000000000
+WORKDIR /source
+COPY apps/media-sidecar/Cargo.toml apps/media-sidecar/Cargo.lock apps/media-sidecar/build.rs ./
+COPY apps/media-sidecar/src ./src
+RUN short_sha="$(printf '%.12s' "$BUILD_SHA")" \
+    && printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$short_sha" >/usr/local/bin/git \
+    && chmod 0755 /usr/local/bin/git \
+    && cargo build --release --locked --bin discord-music-media-sidecar
+
+FROM debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS tools
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir /out \
+    && curl --fail --location --silent --show-error --retry 3 \
+      https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux \
+      --output /out/yt-dlp \
+    && echo '58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a  /out/yt-dlp' | sha256sum --check --strict \
+    && chmod 0755 /out/yt-dlp \
+    && curl --fail --location --silent --show-error --retry 3 \
+      https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip \
+      --output /tmp/deno.zip \
+    && echo '8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530  /tmp/deno.zip' | sha256sum --check --strict \
+    && unzip -q /tmp/deno.zip -d /out \
+    && chmod 0755 /out/deno \
+    && rm /tmp/deno.zip
+
+FROM debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
+ARG BUILD_SHA=0000000000000000000000000000000000000000
+ARG BUILD_TREE=0000000000000000000000000000000000000000
+LABEL org.opencontainers.image.revision=$BUILD_SHA \
+      io.discord-music.source-tree=$BUILD_TREE \
+      io.discord-music.yt-dlp.version=2026.08.19 \
+      io.discord-music.deno.version=2.9.5 \
+      io.discord-music.extractor.proxy=direct-empty \
+      io.discord-music.extractor.js-runtime=deno:/usr/local/bin/deno
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tini=0.19.0-1+b3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 sidecar \
+    && useradd --system --uid 10001 --gid sidecar --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin sidecar
+COPY --from=build /source/target/release/discord-music-media-sidecar /usr/local/bin/discord-music-media-sidecar
+COPY --from=tools /out/yt-dlp /usr/local/bin/yt-dlp
+COPY --from=tools /out/deno /usr/local/bin/deno
+ENV PATH=/usr/local/bin:/usr/bin:/bin \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    HOME=/nonexistent \
+    TMPDIR=/tmp \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+USER 10001:10001
+EXPOSE 3101
+ENTRYPOINT ["/usr/bin/tini","-s","--"]
+CMD ["/usr/local/bin/discord-music-media-sidecar"]
