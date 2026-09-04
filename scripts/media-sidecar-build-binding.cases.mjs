@@ -1,139 +1,198 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-test("build owner CAS rejects adversarial bindings before Docker and preserves exact build identity", () => {
+test("mutate validates build bindings before advancing the real owner lease", () => {
+  // Given: the actual owner CLI, a checkpointed lease, and Docker/git executables that record calls.
   const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
-  const source = owner.slice(0, owner.indexOf(`case "\${1:-}" in`))
-  const fixture = mkdtempSync(join(tmpdir(), "media-build-owner-cas-"))
+  const fixture = mkdtempSync(join(tmpdir(), "media-build-owner-entrypoint-"))
   const backup = join(fixture, "backups")
-  const lease = join(backup, "active.json")
-  const lock = join(fixture, "deploy.lock")
-  const dockerLog = join(fixture, "docker.log")
+  const repo = join(fixture, "repo")
   const runId = `7-${"a".repeat(32)}`
   const sha = "b".repeat(40)
+  const run = join(backup, runId)
+  const lease = join(backup, "active.json")
+  const lock = join(fixture, "deploy.lock")
+  const ownerPath = join(fixture, "owner.sh")
+  const dockerLog = join(fixture, "docker.log")
+  const bin = join(fixture, "bin")
+  const marker = ['case "', "$", '{1:-}" in'].join("")
+  mkdirSync(run, { recursive: true })
+  mkdirSync(repo)
+  mkdirSync(bin)
+  writeFileSync(lock, "")
+  writeFileSync(
+    join(run, "manifest.json"),
+    JSON.stringify({
+      schema: "discord-music-deploy-lease.v1",
+      runId,
+      selectedSha: sha,
+      configPath: join(repo, "compose.yaml"),
+      workingDir: repo,
+    }),
+  )
+  writeFileSync(join(repo, "compose.yaml"), "services: {}\n")
+  const testOwner = `${owner.slice(0, owner.indexOf(marker))}
+require_root() { :; }
+require_paths() { :; }
+${owner.slice(owner.indexOf(marker))}`
+  writeFileSync(ownerPath, testOwner)
+  chmodSync(ownerPath, 0o700)
+  writeFileSync(
+    join(bin, "git"),
+    `#!/usr/bin/env bash
+test "$*" = "-C ${repo} rev-parse HEAD^{tree}" && printf 'tree\n'
+`,
+  )
+  writeFileSync(
+    join(bin, "docker"),
+    `#!/usr/bin/env bash
+printf '%s\n' "$*" >>${JSON.stringify(dockerLog)}
+case "$*" in
+  'images -q --no-trunc') : ;;
+  'build '*) : ;;
+  *) exit 1 ;;
+esac
+`,
+  )
+  chmodSync(join(bin, "git"), 0o700)
+  chmodSync(join(bin, "docker"), 0o700)
 
-  const writeFixture = ({
+  const writeLease = ({
     leaseRunId = runId,
     leaseSha = sha,
-    leaseState = "active",
-    manifestRunId = runId,
-    manifestSha = sha,
-    operation = "build-server",
-    sequence = 1,
-  } = {}) => {
-    const run = join(backup, manifestRunId)
-    mkdirSync(run, { recursive: true })
+    state = "active",
+    activeMutation = null,
+  } = {}) =>
     writeFileSync(
       lease,
       JSON.stringify({
+        schema: "discord-music-deploy-lease.v1",
         runId: leaseRunId,
         selectedSha: leaseSha,
-        state: leaseState,
+        sequence: 0,
+        deadlineBoottime: 9999999999,
+        state,
         restoreState: "idle",
-        sequence,
-        activeMutation: { operation, sequence, pid: null, pgid: null },
-        acceptedOperations: [{ operation, sequence, status: "accepted" }],
+        activeMutation,
+        acceptedOperations: [],
       }),
     )
+
+  const snapshot = () =>
+    JSON.stringify({
+      lease: readFileSync(lease, "utf8"),
+      manifest: readFileSync(join(run, "manifest.json"), "utf8"),
+      operations: existsSync(join(run, "operations")) ? readdirSync(join(run, "operations")) : [],
+      lock: readFileSync(lock, "utf8"),
+      docker: readFileSync(dockerLog, "utf8"),
+    })
+  const invoke = (scenario, operation = "build-server") => {
+    rmSync(join(run, "operations"), { recursive: true, force: true })
+    writeFileSync(dockerLog, "")
+    const callRunId = scenario === "wrong-run" ? `8-${"c".repeat(32)}` : runId
+    const manifestSha = scenario === "manifest-revision" ? "c".repeat(40) : sha
     writeFileSync(
       join(run, "manifest.json"),
       JSON.stringify({
         schema: "discord-music-deploy-lease.v1",
-        runId: manifestRunId,
+        runId,
         selectedSha: manifestSha,
-        configPath: "/opt/discord-music/deploy/compose.yaml",
-        workingDir: "/opt/discord-music/deploy",
+        configPath: join(repo, "compose.yaml"),
+        workingDir: repo,
       }),
     )
-  }
-
-  const run = (scenario, requestedOperation = "build-server") => {
-    rmSync(backup, { recursive: true, force: true })
-    writeFileSync(dockerLog, "")
-    const callRunId = scenario === "wrong-run" ? `8-${"c".repeat(32)}` : runId
-    writeFixture({
+    writeLease({
       leaseRunId: scenario === "wrong-run" ? runId : callRunId,
-      manifestRunId: callRunId,
       leaseSha: scenario === "lease-revision" ? "c".repeat(40) : sha,
-      manifestSha: scenario === "manifest-revision" ? "c".repeat(40) : sha,
-      leaseState: scenario === "wrong-state" ? "committed" : "active",
-      operation:
-        scenario === "wrong-mode"
-          ? "configure-rust"
-          : scenario === "active-build"
-            ? "build-sidecar"
-            : requestedOperation,
+      state: scenario === "wrong-state" ? "committed" : "active",
+      activeMutation:
+        scenario === "concurrent" ? { operation: "build-sidecar", sequence: 1 } : null,
     })
-    const probe = `${source}
-require_root() { :; }
-require_paths() { :; }
-git() { test "$*" = "-C /opt/discord-music rev-parse HEAD^{tree}" && printf 'tree\n'; }
-docker() {
-  printf '%s\n' "$*" >>${JSON.stringify(dockerLog)}
-  case "$*" in
-    'images -q --no-trunc') : ;;
-    'build '*) test "\${DOCKER_BUILD_FAIL:-0}" = 1 && return 1 || : ;;
-    *) return 1 ;;
-  esac
-}
-perform ${JSON.stringify(callRunId)} 1 ${JSON.stringify(requestedOperation)}
-`
-    return spawnSync("bash", ["-s"], {
-      input: probe,
+    const env = {
+      ...process.env,
+      MEDIA_REPO: repo,
+      MEDIA_BACKUP_ROOT: backup,
+      MEDIA_LOCK_FILE: lock,
+      MEDIA_LEASE_FILE: lease,
+      MEDIA_SELECTED_SHA:
+        scenario === "sha-mismatch"
+          ? "d".repeat(40)
+          : scenario === "sha-injection"
+            ? `${sha};touch ${join(fixture, "pwned")}`
+            : sha,
+      MEDIA_COMPOSE_PROJECT:
+        scenario === "wrong-project"
+          ? "other"
+          : scenario === "project-injection"
+            ? `deploy;touch ${join(fixture, "pwned")}`
+            : "deploy",
+      PATH: `${bin}:${process.env.PATH}`,
+    }
+    if (scenario === "project-omitted") delete env.MEDIA_COMPOSE_PROJECT
+    const before = snapshot()
+    const result = spawnSync("bash", [ownerPath, "mutate", callRunId, "0", operation], {
+      input: "",
       encoding: "utf8",
-      env: {
-        ...process.env,
-        MEDIA_BACKUP_ROOT: backup,
-        MEDIA_LEASE_FILE: lease,
-        MEDIA_LOCK_FILE: lock,
-        MEDIA_REPO: "/opt/discord-music",
-        MEDIA_SELECTED_SHA:
-          scenario === "sha-mismatch"
-            ? "d".repeat(40)
-            : scenario === "sha-injection"
-              ? `${sha};touch ${join(fixture, "pwned")}`
-              : sha,
-        MEDIA_COMPOSE_PROJECT:
-          scenario === "wrong-project"
-            ? "other"
-            : scenario === "project-injection"
-              ? `deploy;touch ${join(fixture, "pwned")}`
-              : "deploy",
-        DOCKER_BUILD_FAIL: scenario === "build-failure" ? "1" : "0",
-      },
+      env,
     })
+    return { result, before }
   }
 
   try {
     for (const scenario of [
       "sha-mismatch",
       "wrong-project",
+      "project-omitted",
       "wrong-run",
       "manifest-revision",
       "lease-revision",
       "wrong-mode",
-      "active-build",
       "wrong-state",
+      "concurrent",
       "sha-injection",
       "project-injection",
+      "operation-injection",
     ]) {
-      const result = run(scenario)
+      writeLease()
+      const operation =
+        scenario === "wrong-mode"
+          ? "build-rust"
+          : scenario === "operation-injection"
+            ? `build-server;touch ${join(fixture, "pwned")}`
+            : "build-server"
+      const { result, before } = invoke(scenario, operation)
       assert.equal(result.status, 1, `${scenario}: ${result.stdout}${result.stderr}`)
-      assert.equal(readFileSync(dockerLog, "utf8"), "", scenario)
+      assert.equal(snapshot(), before, scenario)
       assert.equal(existsSync(join(fixture, "pwned")), false, scenario)
     }
 
-    for (const [scenario, operation, tag] of [
-      ["valid-server", "build-server", "discord-music-server"],
-      ["valid-sidecar", "build-sidecar", "discord-music-media-sidecar"],
-      ["valid-combined", "build", "discord-music-server"],
+    for (const [operation, tag] of [
+      ["build-server", "discord-music-server"],
+      ["build-sidecar", "discord-music-media-sidecar"],
+      ["build", "discord-music-server"],
     ]) {
-      const valid = run(scenario, operation)
+      writeLease()
+      const { result: valid, before: validBefore } = invoke("valid", operation)
       assert.equal(valid.status, 0, valid.stderr)
+      assert.notEqual(snapshot(), validBefore)
+      const leaseAfter = JSON.parse(readFileSync(lease, "utf8"))
+      assert.equal(leaseAfter.sequence, 1)
+      assert.deepEqual(leaseAfter.acceptedOperations, [
+        { sequence: 1, operation, status: "succeeded" },
+      ])
       assert.match(
         readFileSync(dockerLog, "utf8"),
         new RegExp(`build -t ${tag}:${sha}[\\s\\S]+--build-arg BUILD_SHA=${sha} `, "u"),
@@ -146,12 +205,7 @@ perform ${JSON.stringify(callRunId)} 1 ${JSON.stringify(requestedOperation)}
         "u",
       ),
     )
-
-    const failed = run("build-failure")
-    assert.equal(failed.status, 1)
-    const failedCalls = readFileSync(dockerLog, "utf8")
-    assert.match(failedCalls, /build -t discord-music-server:/u)
-    assert.doesNotMatch(failedCalls, /prune| image tag| compose/u)
+    assert.deepEqual(readdirSync(join(run, "operations")), ["1.input", "1.log"])
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

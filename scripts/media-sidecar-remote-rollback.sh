@@ -239,14 +239,34 @@ cas_active() {
   now="$(boottime)"; test "$now" -lt "$(lease_value .deadlineBoottime)" || die lease-deadline
 }
 lease_replace() { local filter="$1"; jq "$filter" "$MS_LEASE" | lease_write; }
-build_binding() {
-  local run_id="$1" sequence="$2" operation="$3" manifest="$4"
+build_operation_allowed() {
+  case "$1" in
+    build|build-server|build-sidecar) ;;
+    *) die build-operation;;
+  esac
+}
+validate_build_inputs() {
+  local run_id="$1" manifest="$2"
   test "$MS_PROJECT" = deploy || die build-project
   [[ "$MS_SHA" =~ ^[0-9a-f]{40}$ ]] || die build-selected-sha
   jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$MS_SHA" \
     '.schema==$schema and .runId==$runId and .selectedSha==$sha' "$manifest" >/dev/null || die build-manifest-binding
   test "$(lease_value .runId)" = "$run_id" || die build-run
   test "$(lease_value .selectedSha)" = "$MS_SHA" || die build-lease-sha
+}
+validate_build_mutation() {
+  local run_id="$1" sequence="$2" operation="$3" manifest="$MS_BACKUP/$1/manifest.json"
+  build_operation_allowed "$operation"
+  test -r "$manifest" || die build-manifest-missing
+  validate_build_inputs "$run_id" "$manifest"
+  test "$(lease_value .state)" = active || die build-state
+  test "$(lease_value .sequence)" -eq "$sequence" || die build-sequence
+  jq -e '.activeMutation == null' "$MS_LEASE" >/dev/null || die active-operation
+}
+build_binding() {
+  local run_id="$1" sequence="$2" operation="$3" manifest="$4"
+  build_operation_allowed "$operation"
+  validate_build_inputs "$run_id" "$manifest"
   test "$(lease_value .state)" = active || die build-state
   test "$(lease_value .sequence)" -eq "$sequence" || die build-sequence
   test "$(lease_value .activeMutation.operation)" = "$operation" || die build-operation
@@ -378,6 +398,9 @@ mutate() {
   local run_id="$1" expected="$2" operation="$3" next run log payload pid status
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"
   jq -e '.activeMutation == null' "$MS_LEASE" >/dev/null || die active-operation
+  case "$operation" in
+    build*) validate_build_mutation "$run_id" "$expected" "$operation";;
+  esac
   next=$((expected+1)); run="$MS_BACKUP/$run_id"; mkdir -p "$run/operations"; chmod 0700 "$run/operations"
   log="$run/operations/$next.log"; payload="$run/operations/$next.input"
   : >"$log"; chmod 0600 "$log"; cat >"$payload"; chmod 0600 "$payload"; sync -f "$payload"
