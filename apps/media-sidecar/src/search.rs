@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt as _;
 use reqwest::{StatusCode, redirect::Policy};
+use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -104,6 +105,14 @@ impl SearchClient {
     }
 
     fn build(endpoint: Url, https_only: bool) -> Result<Self, SearchError> {
+        if CryptoProvider::get_default().is_none()
+            && rustls::crypto::ring::default_provider()
+                .install_default()
+                .is_err()
+            && CryptoProvider::get_default().is_none()
+        {
+            return Err(SearchError::ClientBuild);
+        }
         let http = reqwest::Client::builder()
             .no_proxy()
             .redirect(Policy::none())

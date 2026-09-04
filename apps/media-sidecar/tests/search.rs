@@ -311,6 +311,7 @@ async fn proxy_child_probe() {
     )
     .expect("child endpoint must be a URL");
     let client = SearchClient::for_test(endpoint).expect("test client must build");
+    assert!(rustls::crypto::CryptoProvider::get_default().is_some());
 
     // When: the child searches with poisoned upper/lowercase proxy variables.
     let response = client
@@ -320,6 +321,22 @@ async fn proxy_child_probe() {
 
     // Then: the direct response is valid.
     assert_eq!(response.results[0].track.id, "valid-ordinal-1");
+}
+
+#[tokio::test]
+#[ignore = "live HTTPS acceptance is run explicitly before deployment"]
+async fn live_https_search_uses_the_pinned_provider() {
+    let client = SearchClient::new().expect("production HTTPS client must build");
+    let response = client
+        .search(
+            "never gonna give you up official video",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("direct HTTPS search must succeed");
+
+    assert!(!response.results.is_empty());
+    assert!(rustls::crypto::CryptoProvider::get_default().is_some());
 }
 
 #[tokio::test]

@@ -23,7 +23,8 @@ bytes = "=1.12.1"
 futures-util = "=0.3.34"
 http-body-util = "=0.1.5"
 nix = { version = "=0.31.3", default-features = false, features = ["process", "signal"] }
-reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
 scopeguard = "=1.2.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
