@@ -225,6 +225,12 @@ test("live resolve uses the first non-empty acceptance result", () => {
   assert.match(benchmark, /clientFailures: clientFailureCounts\(acceptEvents\)/u)
 })
 
+test("live acceptance stays within search plus preload extractor capacity", () => {
+  const benchmark = readFileSync(new URL("./media-sidecar-benchmark.mjs", import.meta.url), "utf8")
+  assert.match(benchmark, /for \(const query of queries\)[\s\S]+await timed\(query\)/u)
+  assert.doesNotMatch(benchmark, /Promise\.all\(queries\.slice/u)
+})
+
 test("public integration output never exposes a random run-id suffix", () => {
   assert.equal(redactRunId(`12-${"a".repeat(32)}`), "12-<redacted>")
 })

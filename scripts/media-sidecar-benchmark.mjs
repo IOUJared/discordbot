@@ -31,9 +31,7 @@ async function timedRollout(query) {
 
 async function batches(queries) {
   const output = []
-  for (let index = 0; index < queries.length; index += 4) {
-    output.push(...(await Promise.all(queries.slice(index, index + 4).map(timed))))
-  }
+  for (const query of queries) output.push(await timed(query))
   return output
 }
 
