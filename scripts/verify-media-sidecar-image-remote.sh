@@ -115,9 +115,10 @@ for attempt in $(seq 1 20000); do
 done
 exit 1' >"$raw" 2>&1 & observer_client=$!
   docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
+  docker exec "$sidecar" sh -ceu 'umask 077; raw=/tmp/drain-challenge.raw; trap "rm -f -- $raw" EXIT; /usr/bin/timeout 30 /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1' >/dev/null 2>&1 & challenge_client=$!
   observed=false; : >"$work/children"
   for attempt in $(seq 1 100); do
-    count="$(docker exec "$sidecar" sh -ceu 'count=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; esac; done; printf "%s" "$count"')"
+    count="$(docker exec "$sidecar" sh -ceu 'count=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) tr "\0" "\n" <"$p/cmdline" | grep -Fx -- --print >/dev/null || continue; keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; esac; done; printf "%s" "$count"')"
     docker exec "$sidecar" cat /tmp/qa-pids >"$work/children"
     test "$count" -eq 4 && { observed=true; four_latched=true; environment_observed=true; }
     $observed && docker exec "$sidecar" test -f /tmp/qa-deno-observed && break
@@ -135,6 +136,7 @@ exit 1' >"$raw" 2>&1 & observer_client=$!
   started="$(date +%s%3N)"; docker kill --signal=TERM "$sidecar" >"$raw" 2>&1
   while test "$(docker inspect -f '{{.State.Running}}' "$sidecar")" = true; do test $(( $(date +%s%3N) - started )) -lt 10000; sleep 0.1; done
   test $(( $(date +%s%3N) - started )) -lt 10000
+  wait "$challenge_client" 2>/dev/null || true
   stage=host-process-reap
   while IFS=: read -r pid start; do test ! -r "/proc/$pid/stat" || test "$(awk '{print $22}' "/proc/$pid/stat")" != "$start"; done <"$work/host-processes"
 fi
