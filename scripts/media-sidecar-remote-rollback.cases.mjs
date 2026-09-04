@@ -23,6 +23,7 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "lateDaemonDetected",
     "cleanup_retention_locked",
     "recover-restoring",
+    "cleanup-failed-images",
     "restore-first-sample",
     "json_fingerprint",
     'sync -f "$payload"',

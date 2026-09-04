@@ -217,6 +217,12 @@ test("server image makes the Corepack node-gyp launcher executable", () => {
   assert.match(dockerfile, /pnpm --version[\s\S]+node-gyp\/gyp\/gyp_main\.py[\s\S]+chmod 0755/u)
 })
 
+test("live resolve uses the first non-empty acceptance result", () => {
+  const benchmark = readFileSync(new URL("./media-sidecar-benchmark.mjs", import.meta.url), "utf8")
+  assert.match(benchmark, /first\.flatMap\(\(\{ results \}\) => results\)\.at\(0\)/u)
+  assert.match(benchmark, /resolveSuccess = false[\s\S]+try[\s\S]+catch/u)
+})
+
 test("public integration output never exposes a random run-id suffix", () => {
   assert.equal(redactRunId(`12-${"a".repeat(32)}`), "12-<redacted>")
 })

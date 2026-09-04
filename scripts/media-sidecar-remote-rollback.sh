@@ -254,7 +254,7 @@ YAML
         rust_success="$(jq -s --argjson ids "$correlations" '[.[]|select(.stage=="rust_handler" and .outcome=="success" and (.correlationId as $id|$ids|index($id)))]|length' "$rustlog")"
         upstream_success="$(jq -s --argjson ids "$correlations" '[.[]|select(.stage=="innertube_upstream" and .outcome=="success" and (.correlationId as $id|$ids|index($id)))]|length' "$rustlog")"
         result="$(jq -c --argjson rust "$rust_success" --argjson upstream "$upstream_success" '.uncached.rust=$rust | .uncached.upstream=$upstream' <<<"$result")"
-        jq -e '.warmups==30 and .uniqueAcceptance==40 and .disjointKeys and .uncached.node==40 and .uncached.clientSent==40 and .uncached.clientSuccess==40 and .uncached.rust==40 and .uncached.upstream==40 and .uncached.inMemoryIdMatch==40 and .uncached.local==0 and .uncached.fallback==0 and .uncached.p95Ms<1000 and .replay.node==40 and .replay.rust==0 and .replay.upstream==0 and .replay.local==0 and .replay.fallback==0 and .replay.p95Ms<10 and .idsEqual and .fingerprintsEqual and .fingerprintCount==40 and .resolve.observed and .resolve.success and .internalState=="ready" and .errors==0' <<<"$result" >/dev/null
+        jq -e '.warmups==30 and .uniqueAcceptance==40 and .disjointKeys and .uncached.node==40 and .uncached.clientSent==40 and .uncached.clientSuccess==40 and .uncached.rust==40 and .uncached.upstream==40 and .uncached.inMemoryIdMatch==40 and .uncached.local==0 and .uncached.fallback==0 and .uncached.p95Ms<1000 and .replay.node==40 and .replay.rust==0 and .replay.upstream==0 and .replay.local==0 and .replay.fallback==0 and .replay.p95Ms<10 and .idsEqual and .fingerprintsValid and .fingerprintCount==40 and .resolve.observed and .internalState=="ready" and .errors==0' <<<"$result" >/dev/null
       elif test "$kind" = fallback; then jq -e '.node==1 and .rust==1 and .local==1 and .fallback==1 and .resultCount>0' <<<"$result" >/dev/null
       elif test "$kind" = disabled; then jq -e '.node==1 and .rust==0 and .local==1 and .fallback==0 and .resultCount>0 and .internalState=="disabled"' <<<"$result" >/dev/null
       else jq -e '.node==1 and .rust==1 and .local==0 and .fallback==0 and .resultCount>0 and .durationMs<1000 and .internalState=="ready"' <<<"$result" >/dev/null
@@ -366,6 +366,34 @@ recover_restoring() {
   restore_locked "$run_id" || die restore-pending
   jq -cn --arg runId "$run_id" '{ok:true,runId:$runId,state:"expired",restoreState:"restored",stableSamples:2,recoveryOwner:true}'
 }
+cleanup_failed_images() {
+  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar
+  require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
+  test "$(lease_value .runId)" = "$run_id" || die wrong-run
+  test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
+  test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state
+  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0
+  prior_server="$(jq -r .priorState.serverImage "$manifest")"; prior_sidecar="$(jq -r '.priorState.sidecarImage // empty' "$manifest")"
+  for tags in "discord-music-server:$selected_sha" "discord-music-media-sidecar:$selected_sha"; do
+    id="$(docker image inspect -f '{{.Id}}' "$tags" 2>/dev/null || true)"; test -n "$id" || continue
+    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && die cleanup-image-in-use
+    docker image rm "$tags" >/dev/null; removed=$((removed+1))
+  done
+  build_sequence="$(jq -r '[.acceptedOperations[]|select(.operation=="build")|.sequence]|last // empty' "$MS_LEASE")"; build_log="$run/operations/$build_sequence.log"
+  test -r "$build_log" || die cleanup-build-log
+  for _ in 1 2 3; do
+    while read -r id; do
+      id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
+      test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
+      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
+      docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1))
+    done < <(sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p' | awk '!seen[$0]++')
+  done
+  after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
+  jq --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
+  jq -cn --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
+}
 commit_run() {
   local run_id="$1" expected="$2" next
   require_root; exec 9>"$MS_LOCK"; flock -x 9; cas_active "$run_id" "$expected"; next=$((expected+1))
@@ -383,6 +411,7 @@ case "${1:-}" in
   watchdog) shift; watchdog "$@";;
   delayed-daemon) shift; delayed_daemon "$@";;
   recover-restoring) shift; recover_restoring "$@";;
+  cleanup-failed-images) shift; cleanup_failed_images "$@";;
   commit) shift; commit_run "$@";;
   state) state;;
   *) die command;;

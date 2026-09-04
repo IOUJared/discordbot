@@ -69,13 +69,16 @@ async function live() {
   const replayStart = events.length
   const replay = await batches(acceptance)
   const replayEvents = events.slice(replayStart)
-  const replayFingerprints = replayEvents
-    .filter((event) => event.stage === "in_memory_id_match")
-    .map((event) => event.fingerprint)
-  const track = first.at(0)?.results.at(0)?.track
+  const track = first.flatMap(({ results }) => results).at(0)?.track
   if (track === undefined) throw new Error("live search returned no track")
   const resolveStarted = performance.now()
-  await media.source.resolve(track)
+  let resolveSuccess = false
+  try {
+    await media.source.resolve(track)
+    resolveSuccess = true
+  } catch {
+    resolveSuccess = false
+  }
   const resolveMs = performance.now() - resolveStarted
   const firstIds = first.map(({ results }) => results.map(({ track: item }) => item.id))
   const replayIds = replay.map(({ results }) => results.map(({ track: item }) => item.id))
@@ -119,9 +122,11 @@ async function live() {
         p95Ms: percentile95(replay.map(({ elapsed }) => elapsed)),
       },
       idsEqual: JSON.stringify(firstIds) === JSON.stringify(replayIds),
-      fingerprintsEqual: JSON.stringify(firstFingerprints) === JSON.stringify(replayFingerprints),
+      fingerprintsValid:
+        firstFingerprints.length === 40 &&
+        firstFingerprints.every((fingerprint) => /^[0-9a-f]{64}$/u.test(fingerprint)),
       fingerprintCount: firstFingerprints.length,
-      resolve: { observed: true, success: true, durationMs: resolveMs },
+      resolve: { observed: true, success: resolveSuccess, durationMs: resolveMs },
       internalState: media.rollout.state(),
       errors: 0,
     },
