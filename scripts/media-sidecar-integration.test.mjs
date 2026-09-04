@@ -48,6 +48,14 @@ test("disk recovery removes only inputs for terminal successful operations", () 
   assert.match(owner, /volumesRemoved:0/u)
 })
 
+test("benchmark results carry the next lease sequence", () => {
+  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
+  assert.match(
+    owner,
+    /tail -1 "\$log" \| jq -ce --argjson sequence "\$next" '\.sequence=\$sequence'/u,
+  )
+})
+
 test("preflight is read-only and redacts protected bytes", () => {
   const instance = model()
   const before = structuredClone(instance.live)

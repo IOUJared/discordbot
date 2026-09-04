@@ -344,7 +344,7 @@ mutate() {
   fi
   flock -u 9
   test "$status" -eq 0 || { "$MS_SELF" expire "$run_id"; die operation-failed; }
-  if [[ "$operation" == benchmark-* ]]; then tail -1 "$log" | jq -ce .; else jq -cn --argjson sequence "$next" --arg operation "$operation" '{ok:true,sequence:$sequence,operation:$operation}'; fi
+  if [[ "$operation" == benchmark-* ]]; then tail -1 "$log" | jq -ce --argjson sequence "$next" '.sequence=$sequence'; else jq -cn --argjson sequence "$next" --arg operation "$operation" '{ok:true,sequence:$sequence,operation:$operation}'; fi
 }
 restore_locked() {
   local run_id="$1" run manifest config working server_ref sidecar_ref server_source sidecar_source deadline sample1 sample2 events_since events_until event_count observed_count desired marker
