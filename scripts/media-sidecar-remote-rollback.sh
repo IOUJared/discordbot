@@ -494,6 +494,15 @@ cleanup_failed_images() {
     created="$(docker inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -ge "$floor_epoch" || continue
     docker container rm "$id" >/dev/null; removed_containers=$((removed_containers+1))
   done < <(task_build_container_ids; sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> Running in \([0-9a-f]\{12,64\}\)$/\1/p')
+  while read -r id; do
+    test -n "$id" || continue
+    mounts="$(docker inspect -f '{{len .Mounts}}' "$id")"; test "$mounts" -eq 0 || continue
+    labels="$(docker inspect -f '{{json .Config.Labels}}' "$id")"; test "$labels" = null || test "$labels" = '{}' || continue
+    tags="$(docker inspect -f '{{.Config.Image}}' "$id")"
+    docker image inspect -f '{{json .RepoTags}}' "$tags" | grep -Eq '^(null|\[\])$' || continue
+    created="$(docker inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -ge "$floor_epoch" || continue
+    docker container rm "$id" >/dev/null; removed_containers=$((removed_containers+1))
+  done < <(docker ps -aq --filter status=exited)
   for _ in $(seq 1 32); do
     pass_removed=0
     while read -r id; do
