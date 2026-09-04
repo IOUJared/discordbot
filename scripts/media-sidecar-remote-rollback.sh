@@ -425,6 +425,21 @@ task_build_image_ids() {
     done < <(jq -r '.acceptedOperations[]|select(.operation=="build")|.sequence' "$terminal")
   done | sort -u
 }
+task_build_container_ids() {
+  local candidate run_id manifest terminal sequence log
+  for candidate in "$MS_BACKUP"/*; do
+    test -d "$candidate" || continue; run_id="${candidate##*/}"
+    [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
+    manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
+    test -r "$manifest" && test -r "$terminal" || continue
+    jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '.schema==$schema and .runId==$runId' "$manifest" >/dev/null || continue
+    jq -e --arg runId "$run_id" '.runId==$runId and (.state=="committed" or (.state=="expired" and .restoreState=="restored"))' "$terminal" >/dev/null || continue
+    while read -r sequence; do
+      log="$candidate/operations/$sequence.log"; test -r "$log" || continue
+      sed $'s/\033\[[0-9;]*m//g' "$log" | sed -n 's/^ ---> Running in \([0-9a-f]\{12,64\}\)$/\1/p'
+    done < <(jq -r '.acceptedOperations[]|select(.operation=="build")|.sequence' "$terminal")
+  done | sort -u
+}
 task_event_floor() {
   local candidate run_id manifest
   for candidate in "$MS_BACKUP"/*; do
@@ -435,12 +450,12 @@ task_event_floor() {
   done | sort | head -1
 }
 cleanup_failed_images() {
-  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar pass_removed floor floor_epoch created created_epoch
+  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed removed_containers id tags prior_server prior_sidecar pass_removed floor floor_epoch created created_epoch status mounts labels
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
   test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state
-  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0
+  run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0
   prior_server="$(jq -r .priorState.serverImage "$manifest")"; prior_sidecar="$(jq -r '.priorState.sidecarImage // empty' "$manifest")"
   for tags in "discord-music-server:$selected_sha" "discord-music-media-sidecar:$selected_sha"; do
     id="$(docker image inspect -f '{{.Id}}' "$tags" 2>/dev/null || true)"; test -n "$id" || continue
@@ -471,6 +486,14 @@ cleanup_failed_images() {
   done
   floor="$(task_event_floor)"; test -n "$floor" || die cleanup-event-floor
   floor_epoch="$(date -d "$floor" +%s)"
+  while read -r id; do
+    id="$(docker inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
+    status="$(docker inspect -f '{{.State.Status}}' "$id")"; test "$status" = exited || continue
+    mounts="$(docker inspect -f '{{len .Mounts}}' "$id")"; test "$mounts" -eq 0 || continue
+    labels="$(docker inspect -f '{{json .Config.Labels}}' "$id")"; test "$labels" = null || test "$labels" = '{}' || continue
+    created="$(docker inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -ge "$floor_epoch" || continue
+    docker container rm "$id" >/dev/null; removed_containers=$((removed_containers+1))
+  done < <(task_build_container_ids; sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> Running in \([0-9a-f]\{12,64\}\)$/\1/p')
   for _ in $(seq 1 32); do
     pass_removed=0
     while read -r id; do
@@ -485,8 +508,8 @@ cleanup_failed_images() {
     test "$pass_removed" -gt 0 || break
   done
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
-  jq --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
-  jq -cn --argjson removed "$removed" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
+  jq --argjson removed "$removed" --argjson containers "$removed_containers" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
+  jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'
 }
 commit_run() {
   local run_id="$1" expected="$2" next

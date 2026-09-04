@@ -27,6 +27,7 @@ test("remote owner contains irreversible lease and daemon gates", () => {
     "images-before-build",
     "remove_new_untagged_images",
     "task_build_image_ids",
+    "task_build_container_ids",
     "task_event_floor",
     "healthStatus",
     "searchStatus",
