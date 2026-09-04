@@ -41,6 +41,7 @@ pub enum SearchError {
 /// One normalized `YouTube` track from the private v1 protocol.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Track {
     /// `YouTube` video identifier.
     pub id: String,
@@ -61,6 +62,7 @@ pub struct Track {
 /// One ordinal-scored private v1 search result.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SearchResult {
     /// Normalized `YouTube` track.
     pub track: Track,
@@ -73,6 +75,7 @@ pub struct SearchResult {
 /// Strict private v1 search response.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SearchResponse {
     /// Private protocol version.
     pub version: u8,

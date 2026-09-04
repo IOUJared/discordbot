@@ -16,6 +16,12 @@ pub(crate) struct ResolveRequest {
     pub(crate) track: TrackRequest,
 }
 
+impl ResolveRequest {
+    pub(crate) fn validate(&self) -> Result<(), ResolveError> {
+        validate_request(self)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TrackRequest {
@@ -75,7 +81,7 @@ impl Resolver {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-upstream"))]
     pub(crate) const fn for_test(
         executable: PathBuf,
         deadline: Duration,
@@ -93,7 +99,7 @@ impl Resolver {
         request: &ResolveRequest,
         cancelled: CancellationToken,
     ) -> Result<ResolveResponse, ResolveError> {
-        validate_request(request)?;
+        request.validate()?;
         let arguments = arguments(request, self.cookies.as_deref());
         let output = process::execute(
             ProcessSpec {

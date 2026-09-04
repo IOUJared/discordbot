@@ -1,9 +1,12 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 const SCHEMA: &str = "media_sidecar_observation.v1";
+#[cfg(feature = "test-upstream")]
+const TEST_EVENT_CAPACITY: usize = 2_048;
 
 /// A bounded millisecond duration safe for private structured events.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -27,6 +30,10 @@ pub enum Stage {
     InnertubeUpstream,
     /// Bounded yt-dlp child process.
     YtDlp,
+    /// Supervised in-flight operation registry.
+    Registry,
+    /// Bounded service shutdown drain.
+    ShutdownDrain,
 }
 
 /// The allowlisted terminal or transition outcome.
@@ -56,8 +63,6 @@ impl CounterDelta {
     pub const INCREMENT: Self = Self(1);
     /// Decrements an in-flight counter.
     pub const DECREMENT: Self = Self(-1);
-    /// Records an outcome without changing an in-flight counter.
-    pub const UNCHANGED: Self = Self(0);
 }
 
 /// Payload-free private correlation event for extractor operations.
@@ -88,6 +93,49 @@ impl ObservationEvent {
             outcome,
             duration_ms: DurationMillis::from_duration(duration),
             counter_delta,
+        }
+    }
+}
+
+#[derive(Clone)]
+#[doc(hidden)]
+pub struct Observer {
+    recorded: Option<mpsc::Sender<ObservationEvent>>,
+}
+
+impl std::fmt::Debug for Observer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Observer")
+            .field("recording", &self.recorded.is_some())
+            .finish()
+    }
+}
+
+impl Observer {
+    pub(crate) const fn production() -> Self {
+        Self { recorded: None }
+    }
+
+    #[cfg(feature = "test-upstream")]
+    pub(crate) fn recording() -> (Self, mpsc::Receiver<ObservationEvent>) {
+        let (sender, receiver) = mpsc::channel(TEST_EVENT_CAPACITY);
+        (
+            Self {
+                recorded: Some(sender),
+            },
+            receiver,
+        )
+    }
+
+    pub(crate) fn emit(&self, event: ObservationEvent) {
+        if let Ok(serialized) = serde_json::to_string(&event) {
+            tracing::info!(observation = serialized, "media_sidecar_observation");
+        } else {
+            tracing::warn!("observation_serialization_failed");
+        }
+        if let Some(recorded) = &self.recorded {
+            let _ignored = recorded.try_send(event);
         }
     }
 }

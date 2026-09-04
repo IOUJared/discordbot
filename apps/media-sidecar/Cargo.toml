@@ -12,6 +12,11 @@ build = "build.rs"
 default = []
 test-upstream = []
 
+[[bin]]
+name = "media-sidecar-test-harness"
+path = "src/bin/media-sidecar-test-harness.rs"
+required-features = ["test-upstream"]
+
 [dependencies]
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "tracing"] }
 bytes = "=1.12.1"
