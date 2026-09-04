@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto"
-
 import type { SearchResult } from "@discord-music/contracts"
 import type { SidecarExtractorClient } from "./youtube-extractor-rollout.js"
 import {
@@ -11,6 +9,7 @@ import {
   type ExtractorRolloutMode,
   type ExtractorRolloutObservation,
   type ExtractorRolloutState,
+  requestCorrelationId,
   SidecarError,
   SidecarUnavailableError,
   sidecarFailureKind,
@@ -42,7 +41,7 @@ export class RolloutSearch {
   async search(query: string, signal?: AbortSignal): Promise<readonly SearchResult[]> {
     if (this.dependencies.isClosing())
       throw new SidecarUnavailableError("Sidecar rollout is closed")
-    const correlationId = randomUUID()
+    const correlationId = requestCorrelationId(signal)
     switch (this.dependencies.mode) {
       case "disabled":
         return this.localSearch(query, signal, correlationId)
@@ -75,7 +74,10 @@ export class RolloutSearch {
       return results
     } catch (error) {
       const outcome = sidecarFailureKind(error)
-      if (outcome === "caller_abort") throw error
+      if (outcome === "caller_abort") {
+        this.dependencies.event("sidecar_outcome", { correlationId, outcome })
+        throw error
+      }
       this.dependencies.setState("degraded")
       this.dependencies.event("sidecar_outcome", { correlationId, outcome })
       if (!isFallbackError(error)) throw error

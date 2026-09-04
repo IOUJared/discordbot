@@ -32,7 +32,11 @@ import {
 import { LocalYouTubeResolver } from "../media/youtube-local-resolver.js"
 import { youtubeSearchClient } from "../media/youtube-search.js"
 import { YouTubeSidecarClient } from "../media/youtube-sidecar-client.js"
-import type { MediaSidecarObservation } from "../media/youtube-sidecar-observation.js"
+import type {
+  ExtractorRolloutObservation,
+  SidecarClientObservation,
+  SidecarRuntimeObservation,
+} from "../media/youtube-sidecar-observation.js"
 import type { PlaybackFailureLog } from "../player/playback-failure.js"
 import { systemScheduler } from "../player/ports.js"
 import { PlayerService } from "../player/service.js"
@@ -56,6 +60,11 @@ type ProductionMedia = {
   readonly source: YouTubeMusicSource
   readonly rollout: YouTubeExtractorRollout
 }
+
+type MediaSidecarObservation =
+  | ExtractorRolloutObservation
+  | SidecarClientObservation
+  | SidecarRuntimeObservation
 
 function sidecarAdapter(
   baseUrl: string,

@@ -13,9 +13,14 @@ import {
   beginHttpSearch,
   deferred,
   searchApi,
-  startRustSearchApp,
   startSearchApp,
 } from "./youtube-sidecar-e2e-fixture.js"
+import {
+  rustCorrelationIds,
+  rustCounterDeltas,
+  rustStages,
+  startRustSearchApp,
+} from "./youtube-sidecar-rust-e2e-fixture.js"
 
 const results = [
   {
@@ -81,19 +86,6 @@ async function waitForWaiterCount(
     await new Promise<void>((resolve) => setImmediate(resolve))
   }
   throw new TypeError(`Waiter count ${waiterCount} was not observed: ${JSON.stringify(events)}`)
-}
-
-function rustCounterDeltas(events: readonly unknown[], expectedStage: string): number[] {
-  return events.flatMap((event) =>
-    typeof event === "object" &&
-    event !== null &&
-    "stage" in event &&
-    event.stage === expectedStage &&
-    "counterDelta" in event &&
-    typeof event.counterDelta === "number"
-      ? [event.counterDelta]
-      : [],
-  )
 }
 
 describe("Node media sidecar runtime", () => {
@@ -243,6 +235,23 @@ describe("Node media sidecar runtime", () => {
     expect(runtime.localCalls()).toBe(0)
     expect(rustCounterDeltas(runtime.rustEvents(), "registry")).toEqual([1, -1])
     expect(rustCounterDeltas(runtime.rustEvents(), "innertube_upstream")).toEqual([1, -1])
+    expect(rustCounterDeltas(runtime.rustEvents(), "rust_handler")).toEqual([1, -1])
+    const nodeEvents = runtime.nodeEvents()
+    expect(nodeEvents.filter(({ stage }) => stage === "route_start")).toHaveLength(2)
+    expect(nodeEvents.map(({ stage }) => stage)).toEqual(
+      expect.arrayContaining(["waiter_count", "client_sent", "client_failure", "sidecar_outcome"]),
+    )
+    expect(rustStages(runtime.rustEvents())).toEqual(
+      expect.arrayContaining(["rust_handler", "registry", "innertube_upstream"]),
+    )
+    const correlationIds = new Set([
+      ...nodeEvents.map(({ correlationId }) => correlationId),
+      ...rustCorrelationIds(runtime.rustEvents()),
+    ])
+    expect(correlationIds.size).toBe(1)
+    expect([...correlationIds][0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    )
     expect(JSON.stringify(runtime.rustEvents())).not.toContain("rust-cancel")
     expect(JSON.stringify(events)).not.toContain("rust-cancel")
     expect(events.filter(({ stage }) => stage === "disconnect")).toHaveLength(2)

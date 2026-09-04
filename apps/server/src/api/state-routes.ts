@@ -6,6 +6,7 @@ import { authorize, type SessionStore } from "../auth/session-auth.js"
 import {
   MEDIA_SIDECAR_OBSERVATION_SCHEMA,
   registerRequestCorrelation,
+  requestCorrelationId,
   type SidecarRuntimeObservationSink,
 } from "../media/youtube-sidecar-observation.js"
 import type { SnapshotHub } from "../runtime/snapshot-hub.js"
@@ -38,7 +39,7 @@ export function registerStateRoutes(app: FastifyInstance, deps: StateRouteDeps):
   app.post("/api/search", async (request, reply) => {
     authorize(request, deps.sessions)
     const { q } = searchSchema.parse(request.body)
-    const correlationId = randomUUID()
+    let correlationId: string = randomUUID()
     const controller = new AbortController()
     registerRequestCorrelation(controller.signal, correlationId)
     let active = true
@@ -79,9 +80,11 @@ export function registerStateRoutes(app: FastifyInstance, deps: StateRouteDeps):
     reply.raw.once("close", disconnect)
     reply.raw.once("error", disconnect)
     reply.raw.socket?.once("close", disconnect)
-    observe("route_start")
     try {
-      return { results: await deps.search.search(q, controller.signal) }
+      const search = deps.search.search(q, controller.signal)
+      correlationId = requestCorrelationId(controller.signal)
+      observe("route_start")
+      return { results: await search }
     } catch (error) {
       if (controller.signal.aborted) return reply
       throw error

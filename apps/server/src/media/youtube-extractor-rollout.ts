@@ -15,6 +15,7 @@ import {
   type ExtractorRolloutObservation,
   type ExtractorRolloutObservationSink,
   type ExtractorRolloutState,
+  requestCorrelationId,
   SidecarError,
   SidecarUnavailableError,
   sidecarFailureKind,
@@ -96,7 +97,7 @@ export class YouTubeExtractorRollout implements YouTubeExtractor {
   async resolve(track: Track, signal?: AbortSignal): Promise<PlayableMedia> {
     if (this.closePromise !== undefined)
       throw new SidecarUnavailableError("Sidecar rollout is closed")
-    const correlationId = randomUUID()
+    const correlationId = requestCorrelationId(signal)
     switch (this.options.mode) {
       case "disabled":
         return this.local(track, signal, correlationId)
@@ -156,7 +157,10 @@ export class YouTubeExtractorRollout implements YouTubeExtractor {
       return result
     } catch (error) {
       const outcome = sidecarFailureKind(error)
-      if (outcome === "caller_abort") throw error
+      if (outcome === "caller_abort") {
+        this.event("sidecar_outcome", { correlationId: request.correlationId, outcome })
+        throw error
+      }
       this.currentState = "degraded"
       this.event("sidecar_outcome", { correlationId: request.correlationId, outcome })
       if (!isFallbackError(error)) throw error

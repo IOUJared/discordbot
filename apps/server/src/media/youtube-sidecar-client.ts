@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto"
-
 import type { SearchResult, Track } from "@discord-music/contracts"
 import ky, { type Options } from "ky"
 import { Agent } from "undici"
@@ -13,6 +11,7 @@ import {
   parseSidecarHttpError,
   parseSidecarResolve,
   parseSidecarSearch,
+  requestCorrelationId,
   SidecarClientDeadlineError,
   SidecarError,
   type SidecarObservationSink,
@@ -162,7 +161,7 @@ export class YouTubeSidecarClient {
     parse: (value: unknown) => Output,
     callerSignal?: AbortSignal,
   ): Promise<Output> {
-    const correlationId = randomUUID()
+    const correlationId = requestCorrelationId(callerSignal)
     const controller = new AbortController()
     let abortSource: "caller" | "deadline" | undefined
     const abortFromCaller = (): void => {

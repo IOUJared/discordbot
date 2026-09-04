@@ -113,7 +113,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
     }
     this.searchCache.delete(cacheKey)
 
-    const results = await this.searchCoalescer.run({
+    const search = this.searchCoalescer.run({
       key: cacheKey,
       correlationId,
       ...(signal === undefined ? {} : { signal }),
@@ -133,7 +133,8 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
         return results
       },
     })
-    return this.observeSearchResults(correlationId, results)
+    const results = await search.outcome
+    return this.observeSearchResults(search.correlationId, results)
   }
 
   private observeSearchResults(

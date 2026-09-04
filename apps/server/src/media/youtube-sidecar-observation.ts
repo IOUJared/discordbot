@@ -50,17 +50,18 @@ export type SidecarRuntimeObservation = {
   readonly fingerprint?: string
 }
 export type SidecarRuntimeObservationSink = (event: SidecarRuntimeObservation) => void
-export type MediaSidecarObservation =
-  | SidecarClientObservation
-  | SidecarRuntimeObservation
-  | ExtractorRolloutObservation
 
 export function registerRequestCorrelation(signal: AbortSignal, correlationId: string): void {
   requestCorrelations.set(signal, correlationId)
 }
 
 export function requestCorrelationId(signal: AbortSignal | undefined): string {
-  return signal === undefined ? randomUUID() : (requestCorrelations.get(signal) ?? randomUUID())
+  if (signal === undefined) return randomUUID()
+  const existing = requestCorrelations.get(signal)
+  if (existing !== undefined) return existing
+  const correlationId = randomUUID()
+  requestCorrelations.set(signal, correlationId)
+  return correlationId
 }
 
 export function fingerprintMediaIds(ids: readonly string[]): string {
