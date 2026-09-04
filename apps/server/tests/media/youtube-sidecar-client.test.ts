@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import { TrackSchema } from "@discord-music/contracts"
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { z } from "zod"
 
 import {
@@ -61,6 +61,25 @@ afterEach(async () => {
 })
 
 describe("YouTubeSidecarClient", () => {
+  it("pairs the direct Agent with its Undici fetch implementation", async () => {
+    const server = await fakeServer((_request, response) =>
+      json(response, 200, { version: 1, status: "ok" }),
+    )
+    opened.push(server.close)
+    const client = new YouTubeSidecarClient({ baseUrl: server.url })
+    opened.push(() => client.close())
+    const incompatibleFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new TypeError("external dispatcher is incompatible"))
+
+    try {
+      await expect(client.health()).resolves.toEqual({ version: 1, status: "ok" })
+      expect(incompatibleFetch).not.toHaveBeenCalled()
+    } finally {
+      incompatibleFetch.mockRestore()
+    }
+  })
+
   it("round-trips every v1 manifest case", async () => {
     // Given: every manifest row and its normalized response/error fixture.
     const manifest = z

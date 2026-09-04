@@ -1,6 +1,5 @@
 import type { SearchResult, Track } from "@discord-music/contracts"
-import ky, { type Options } from "ky"
-import { Agent } from "undici"
+import { Agent, fetch as undiciFetch } from "undici"
 
 import type { PlayableMedia } from "./types.js"
 import {
@@ -59,7 +58,9 @@ function parseBaseUrl(value: string): URL {
   return url
 }
 
-async function readBoundedBody(response: Response): Promise<unknown> {
+async function readBoundedBody(
+  response: Awaited<ReturnType<typeof undiciFetch>>,
+): Promise<unknown> {
   if (response.body === null) throw sidecarProtocolError()
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -183,19 +184,16 @@ export class YouTubeSidecarClient {
     try {
       const requestOptions = {
         method,
-        retry: 0,
         redirect: "manual",
-        timeout: false,
-        throwHttpErrors: false,
         signal: controller.signal,
-        headers: { [CORRELATION_HEADER]: correlationId },
-        ...(body === undefined ? {} : { json: body }),
-      } satisfies Options
-      Object.defineProperty(requestOptions, "dispatcher", {
-        value: this.dispatcher,
-        enumerable: true,
-      })
-      const response = await ky(new URL(path, this.baseUrl), requestOptions)
+        dispatcher: this.dispatcher,
+        headers: {
+          [CORRELATION_HEADER]: correlationId,
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      } as const
+      const response = await undiciFetch(new URL(path, this.baseUrl), requestOptions)
       if (response.status >= 300 && response.status < 400) throw sidecarProtocolError()
       if (response.headers.get("content-type") !== "application/json") throw sidecarProtocolError()
       const parsedBody = await readBoundedBody(response)
