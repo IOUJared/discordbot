@@ -30,6 +30,7 @@ export function youtubeRadioSearchArgs(genre: string): readonly string[] {
     sp: "EgIQAw%3D%3D",
   })
   return [
+    "--ignore-config",
     "--dump-single-json",
     "--flat-playlist",
     "--playlist-end",
@@ -41,6 +42,7 @@ export function youtubeRadioSearchArgs(genre: string): readonly string[] {
 
 export function youtubeRadioPlaylistArgs(url: string): readonly string[] {
   return [
+    "--ignore-config",
     "--dump-single-json",
     "--flat-playlist",
     "--yes-playlist",

@@ -23,7 +23,14 @@ const playlistOutputSchema = z.object({
 const allowedYouTubeHosts = new Set(["youtube.com", "www.youtube.com", "m.youtube.com"])
 
 export function youtubePlaylistArgs(url: string): readonly string[] {
-  return ["--dump-single-json", "--flat-playlist", "--yes-playlist", "--no-warnings", url]
+  return [
+    "--ignore-config",
+    "--dump-single-json",
+    "--flat-playlist",
+    "--yes-playlist",
+    "--no-warnings",
+    url,
+  ]
 }
 
 export function parseYouTubePlaylistUrl(url: string): URL {

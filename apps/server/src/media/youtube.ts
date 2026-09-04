@@ -343,6 +343,7 @@ export class YouTubeMusicSource implements MusicSource, PlaylistSource, RadioSou
     const request = {
       file: "yt-dlp",
       args: [
+        "--ignore-config",
         ...(this.youtubeCookiesPath === undefined ? [] : ["--cookies", this.youtubeCookiesPath]),
         "--no-playlist",
         "--no-warnings",

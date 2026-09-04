@@ -37,6 +37,7 @@ describe("YouTube yt-dlp boundary", () => {
     const args = youtubeRadioSearchArgs(genre)
 
     // Then
+    expect(args.at(0)).toBe("--ignore-config")
     expect(args.at(-1)).toContain("search_query=indie+rock%3B+%24%28id%29+music+playlist")
     expect(args.at(-1)).toContain("sp=EgIQAw%253D%253D")
     expect(args).toContain("--flat-playlist")
@@ -159,6 +160,7 @@ describe("YouTube yt-dlp boundary", () => {
     const args = youtubePlaylistArgs(url)
 
     // Then
+    expect(args.at(0)).toBe("--ignore-config")
     expect(args).toContain("--yes-playlist")
     expect(args.at(-1)).toBe(url)
   })
@@ -659,6 +661,7 @@ describe("YouTube yt-dlp boundary", () => {
     await source.resolve(premiumTrack)
 
     // Then
+    expect(args.at(0)).toBe("--ignore-config")
     expect(args).toContain("--cookies")
     expect(args).not.toContain("--dump-single-json")
     expect(args.at(args.indexOf("--print") + 1)).toBe(
