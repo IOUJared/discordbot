@@ -78,3 +78,15 @@ test("remote owner hashes exact compact state bytes", () => {
   const result = spawnSync("bash", ["-s"], { input: probe, encoding: "utf8" })
   assert.equal(result.status, 0, result.stderr)
 })
+
+test("daemon quiet windows ignore periodic healthcheck exec noise", () => {
+  const prefix = source.slice(0, source.indexOf("preflight() {"))
+  const probe = `${prefix}
+docker() {
+  printf '%s\\n' '{"Action":"exec_create: probe"}' '{"Action":"exec_start: probe"}' '{"Action":"exec_die"}' '{"Action":"create"}'
+}
+test "$(project_mutation_event_count 1 2)" = 1
+`
+  const result = spawnSync("bash", ["-s"], { input: probe, encoding: "utf8" })
+  assert.equal(result.status, 0, result.stderr)
+})

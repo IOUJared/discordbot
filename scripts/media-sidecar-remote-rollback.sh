@@ -109,6 +109,10 @@ state_json() {
 }
 json_fingerprint() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
 state_fingerprint() { local state; state="$(state_json "$1")"; json_fingerprint "$state"; }
+project_mutation_event_count() {
+  docker events --since "$1" --until "$2" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' |
+    jq -sc '[.[]|select(.Action|test("^(create|start|stop|die|kill|destroy|restart|rename|health_status)"))]|length'
+}
 preflight() {
   require_root; require_paths
   test -r "$MS_REPO/.git/HEAD" || die repository-missing
@@ -325,7 +329,7 @@ restore_locked() {
   server_ref="$(jq -r .priorState.serverRef "$manifest")"; sidecar_ref="$(jq -r '.priorState.sidecarRef // empty' "$manifest")"
   desired="$(jq -r .desiredFingerprint "$manifest")"; marker="$run/restore-first-sample"
   deadline=$(( $(boottime)+120 )); events_since="$(jq -r .eventCursor "$manifest")"; events_until="$(date +%s)"
-  observed_count="$(docker events --since "$events_since" --until "$events_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"
+  observed_count="$(project_mutation_event_count "$events_since" "$events_until")"
   while test "$(boottime)" -lt "$deadline"; do
     git -C "$MS_REPO" reset --hard "$(jq -r .priorState.git "$manifest")" >/dev/null
     cp "$run/compose.yaml" "$config"; cp "$run/deploy.env" "$working/.env"; chmod 0600 "$config" "$working/.env"
@@ -341,7 +345,7 @@ restore_locked() {
     test "$sample1" = "$desired" || { jq '.reconcilePasses += 1 | .stableSamples=0' "$MS_LEASE" | lease_write; continue; }
     if test ! -e "$marker"; then : >"$marker"; chmod 0600 "$marker"; sync -f "$marker"; sync -f "$run"; fi
     events_since="$(date +%s)"; sleep 5; sample2="$(state_fingerprint "$config" 2>/dev/null || true)"; events_until="$(date +%s)"
-    event_count="$(docker events --since "$events_since" --until "$events_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"; observed_count=$((observed_count+event_count))
+    event_count="$(project_mutation_event_count "$events_since" "$events_until")"; observed_count=$((observed_count+event_count))
     if test "$sample2" = "$sample1" && test "$event_count" -eq 0; then
       jq --argjson observed "$observed_count" --argjson stableAt "$(boottime)" '.restoreState="restored" | .stableSamples=2 | .activeMutation=null | .acceptedOperations |= map(if .status=="accepted" then .status="superseded" else . end) | .eventProof={cursor:.eventCursor,observedCount:$observed,quietWindowEvents:0,stableAtBoottime:$stableAt}' "$MS_LEASE" | lease_write; return 0
     fi
@@ -540,10 +544,10 @@ commit_run() {
   jq -e '.activeMutation==null and (.acceptedOperations|all(.status!="accepted"))' "$MS_LEASE" >/dev/null || die accepted-operation-active
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"; config="$(jq -r .configPath "$manifest")"; cursor="$(lease_value .eventCursor)"
   events_until="$(date --iso-8601=ns)"
-  observed="$(docker events --since "$cursor" --until "$events_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"
+  observed="$(project_mutation_event_count "$cursor" "$events_until")"
   sample1="$(state_fingerprint "$config")"; quiet_since="$(date +%s)"; sleep 5
   sample2="$(state_fingerprint "$config")"; quiet_until="$(date +%s)"
-  quiet_events="$(docker events --since "$quiet_since" --until "$quiet_until" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' | wc -l)"
+  quiet_events="$(project_mutation_event_count "$quiet_since" "$quiet_until")"
   test "$sample1" = "$sample2" || die commit-state-unstable
   test "$quiet_events" -eq 0 || die commit-daemon-not-quiet
   cas_active "$run_id" "$expected"; stable_at="$(boottime)"
