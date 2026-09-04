@@ -19,6 +19,7 @@ readonly MS_RETENTION_DAYS="${MEDIA_RETENTION_DAYS:-7}"
 readonly MS_DANGLING_RETENTION_DAYS="${MEDIA_DANGLING_RETENTION_DAYS:-1}"
 readonly MS_LEASE_TEMP_STALE_SECONDS=300
 readonly MS_EXPECT_UID="${MEDIA_OWNER_TEST_UID:-0}"
+readonly MS_OWNER_PID="$$"
 
 die() { printf '{"ok":false,"stage":"%s"}\n' "$1" >&2; exit 1; }
 boottime() { awk '{printf "%d", $1}' /proc/uptime; }
@@ -336,23 +337,236 @@ preflight() {
     --arg lease "$lease_state" --arg restore "$restore_state" --arg snapshot "$after" \
     '{ok:true,readOnly:true,trackedClean:$trackedClean,managedLegacyConfig:$managedLegacyConfig,protectedConfig:true,sha:$sha,configHash:$configHash,lease:$lease,restoreState:$restore,writeSnapshot:$snapshot}'
 }
-commit_begin_run_locked() {
-  python3 - "$1" "$2" "$3" "$MS_LEASE" "$MS_COUNTER" "$MS_PRIOR_LEASE_ID" "$MS_PRIOR_LEASE_HASH" "$MS_PRIOR_CHECKPOINT_ID" "$MS_TEST_ROOT" 2>/dev/null <<'PY'
-import hashlib
+recover_begin_runs_locked() {
+  python3 - "$MS_BACKUP" "$MS_COUNTER" "${1:-}" "$MS_EXPECT_UID" 2>/dev/null <<'PY'
+import json
 import os
+import re
 import shutil
 import stat
 import sys
 
-temp, run, prior_run, lease, counter, lease_id, lease_hash, checkpoint_id, test_root = sys.argv[1:]
+backup, counter, current, uid_value = sys.argv[1:]
+uid = int(uid_value)
+counter_value = int(open(counter, encoding="ascii").read().strip()) if os.path.exists(counter) else 0
+run_pattern = re.compile(r"^([1-9][0-9]*)-([0-9a-f]{32})$")
+temp_pattern = re.compile(r"^\.([1-9][0-9]*-[0-9a-f]{32})\.tmp$")
+
+def unique(pairs):
+    value = {}
+    for key, member in pairs:
+        if key in value: raise ValueError("duplicate")
+        value[key] = member
+    return value
+
+def marker_for(path):
+    marker_path = os.path.join(path, ".begin-pending")
+    value = os.lstat(path)
+    marker_stat = os.lstat(marker_path)
+    if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o700:
+        raise ValueError("unsafe pending directory")
+    if not stat.S_ISREG(marker_stat.st_mode) or stat.S_ISLNK(marker_stat.st_mode) or marker_stat.st_uid != uid or stat.S_IMODE(marker_stat.st_mode) != 0o600:
+        raise ValueError("unsafe pending marker")
+    with open(marker_path, encoding="utf-8") as source:
+        marker = json.load(source, object_pairs_hook=unique)
+    if set(marker) != {"schema", "runId", "generation", "priorRunId"} or marker["schema"] != "discord-music-begin-pending.v1":
+        raise ValueError("invalid pending marker")
+    if type(marker["generation"]) is not int or marker["generation"] < 1 or not run_pattern.fullmatch(marker["runId"]):
+        raise ValueError("invalid pending binding")
+    if int(marker["runId"].split("-", 1)[0]) != marker["generation"]:
+        raise ValueError("invalid pending generation")
+    return marker
+
+changed = False
+for name in sorted(os.listdir(backup)):
+    lease_stage = re.fullmatch(r"active\.json\.begin\.([1-9][0-9]*-[0-9a-f]{32})\.tmp", name)
+    if lease_stage:
+        value = os.lstat(os.path.join(backup, name))
+        generation = int(lease_stage.group(1).split("-", 1)[0])
+        if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o600 or generation > counter_value:
+            raise ValueError("unsafe pending lease")
+        os.unlink(os.path.join(backup, name)); changed = True
+        continue
+    path = os.path.join(backup, name)
+    match = temp_pattern.fullmatch(name)
+    run_id = match.group(1) if match else name
+    if not match and not run_pattern.fullmatch(name): continue
+    try: marker = marker_for(path)
+    except FileNotFoundError: continue
+    if marker["runId"] != run_id or marker["generation"] > counter_value:
+        raise ValueError("unbound pending checkpoint")
+    marker_path = os.path.join(path, ".begin-pending")
+    if run_id == current and not match:
+        os.unlink(marker_path)
+        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    else:
+        shutil.rmtree(path)
+    changed = True
+if changed:
+    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+PY
+}
+recover_interrupted_active_locked() {
+  python3 - "$MS_BACKUP" "$MS_LEASE" "$MS_EXPECT_UID" 2>/dev/null <<'PY'
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+backup, lease, uid_value = sys.argv[1:]
+uid = int(uid_value)
+run_pattern = re.compile(r"^[1-9][0-9]*-[0-9a-f]{32}$")
+lease_keys = {"schema", "runId", "generation", "selectedSha", "sequence", "deadlineClock", "deadlineBoottime", "eventCursor", "state", "restoreState", "stableSamples", "lateDaemonDetected", "reconcilePasses", "eventProof", "acceptedOperations", "activeMutation"}
+
+def unique(pairs):
+    value = {}
+    for key, member in pairs:
+        if key in value: raise ValueError("duplicate")
+        value[key] = member
+    return value
+
+def load(path):
+    with open(path, encoding="utf-8") as source:
+        return json.load(source, object_pairs_hook=unique)
+
+def regular(path, mode):
+    value = os.lstat(path)
+    if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != mode:
+        raise ValueError("unsafe file")
+
+def directory(path):
+    value = os.lstat(path)
+    if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o700 or os.path.realpath(path) != path:
+        raise ValueError("unsafe directory")
+
+if not os.path.exists(lease): raise SystemExit(0)
+regular(lease, 0o600)
+lease_stat = os.lstat(lease)
+with open(lease, "rb") as source: lease_digest = hashlib.sha256(source.read()).digest()
+active = load(lease)
+if active.get("state") != "active": raise SystemExit(0)
+if set(active) != lease_keys or active.get("schema") != "discord-music-deploy-lease.v1" or active.get("restoreState") != "idle" or not run_pattern.fullmatch(active.get("runId", "")) or type(active.get("generation")) is not int or active.get("sequence") != 0 or active.get("acceptedOperations") != [] or active.get("activeMutation") is not None:
+    raise ValueError("invalid active lease")
+run = os.path.join(backup, active["runId"])
+marker_path = os.path.join(run, ".begin-pending")
+if not os.path.exists(marker_path): raise SystemExit(0)
+directory(run)
+for name, mode in ((".begin-pending", 0o600), ("manifest.json", 0o600), ("compose.yaml", 0o600), ("deploy.env", 0o600), ("owner.sh", 0o700)):
+    regular(os.path.join(run, name), mode)
+marker = load(marker_path); manifest = load(os.path.join(run, "manifest.json"))
+if set(marker) != {"schema", "runId", "generation", "priorRunId"} or marker["schema"] != "discord-music-begin-pending.v1" or marker["runId"] != active["runId"] or marker["generation"] != active["generation"] or manifest.get("runId") != active["runId"] or manifest.get("generation") != active["generation"]:
+    raise ValueError("invalid active pending binding")
+for name, key in (("compose.yaml", "composeHash"), ("deploy.env", "envHash"), ("owner.sh", "ownerHash")):
+    with open(os.path.join(run, name), "rb") as source:
+        if hashlib.sha256(source.read()).hexdigest() != manifest.get(key): raise ValueError("active checkpoint hash mismatch")
+prior_id = marker["priorRunId"]
+if prior_id is not None:
+    if not isinstance(prior_id, str) or not run_pattern.fullmatch(prior_id): raise ValueError("invalid prior run")
+    prior_run = os.path.join(backup, prior_id); directory(prior_run)
+    for name in ("terminal.json", "manifest.json", "compose.yaml", "deploy.env"):
+        regular(os.path.join(prior_run, name), 0o600)
+    terminal_path = os.path.join(prior_run, "terminal.json"); terminal = load(terminal_path)
+    prior_manifest = load(os.path.join(prior_run, "manifest.json"))
+    if set(terminal) != lease_keys or terminal.get("runId") != prior_id or terminal.get("generation", active["generation"]) >= active["generation"] or (terminal.get("state"), terminal.get("restoreState")) not in {("committed", "idle"), ("expired", "restored")} or prior_manifest.get("runId") != prior_id or prior_manifest.get("generation") != terminal.get("generation") or prior_manifest.get("selectedSha") != terminal.get("selectedSha"):
+        raise ValueError("invalid prior terminal")
+    for name, key in (("compose.yaml", "composeHash"), ("deploy.env", "envHash")):
+        with open(os.path.join(prior_run, name), "rb") as source:
+            if hashlib.sha256(source.read()).hexdigest() != prior_manifest.get(key): raise ValueError("prior checkpoint hash mismatch")
+    value = open(terminal_path, "rb").read()
+    staged = f"{lease}.recover.{os.getpid()}"
+    with open(staged, "wb") as target:
+        target.write(value); target.flush(); os.fsync(target.fileno())
+    os.chmod(staged, 0o600)
+else:
+    staged = None
+current_stat = os.lstat(lease)
+with open(lease, "rb") as source: current_digest = hashlib.sha256(source.read()).digest()
+if (current_stat.st_dev, current_stat.st_ino, current_digest) != (lease_stat.st_dev, lease_stat.st_ino, lease_digest):
+    if staged and os.path.exists(staged): os.unlink(staged)
+    raise ValueError("active lease replaced")
+if staged: os.replace(staged, lease)
+else: os.unlink(lease)
+directory_fd = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+try: os.fsync(directory_fd)
+finally: os.close(directory_fd)
+PY
+}
+allocate_generation_locked() {
+  python3 - "$MS_COUNTER" "$MS_BACKUP" "$MS_TEST_ROOT" "$MS_OWNER_PID" 2>/dev/null <<'PY'
+import os
+import signal
+import sys
+
+counter, backup, test_root, owner_pid = sys.argv[1:]
+phase = os.environ.get("MEDIA_OWNER_TEST_KILL_PHASE", "") if test_root else ""
+replace_phase = os.environ.get("MEDIA_OWNER_TEST_REPLACE_PHASE", "") if test_root else ""
+
+def crash(name):
+    if phase != name: return
+    os.kill(int(owner_pid), signal.SIGKILL)
+    os.kill(os.getpid(), signal.SIGKILL)
+
+current = 0
+if os.path.exists(counter):
+    raw = open(counter, encoding="ascii").read()
+    if not raw.endswith("\n") or not raw[:-1].isdigit(): raise ValueError("invalid counter")
+    current = int(raw[:-1])
+generation = current + 1
+staged = f"{counter}.allocate.{os.getpid()}"
+with open(staged, "w", encoding="ascii") as target:
+    target.write(f"{generation}\n"); target.flush(); os.fsync(target.fileno())
+os.chmod(staged, 0o600)
+os.replace(staged, counter)
+crash("before-counter-fsync")
+directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+try: os.fsync(directory)
+finally: os.close(directory)
+crash("after-counter-fsync")
+if replace_phase == "counter-fsync" and os.environ.get("REPLACE_LEASE_WITH"):
+    lease = os.environ["LEASE_PATH"]
+    staged_lease = f"{lease}.replacement"
+    with open(os.environ["REPLACE_LEASE_WITH"], "rb") as source, open(staged_lease, "wb") as target:
+        target.write(source.read()); target.flush(); os.fsync(target.fileno())
+    os.chmod(staged_lease, 0o600)
+    os.replace(staged_lease, lease)
+    directory = os.open(os.path.dirname(lease), os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+print(generation)
+PY
+}
+publish_begin_run_locked() {
+  python3 - "$1" "$2" "$3" "$MS_LEASE" "$MS_PRIOR_LEASE_ID" "$MS_PRIOR_LEASE_HASH" "$MS_PRIOR_CHECKPOINT_ID" "$MS_TEST_ROOT" "$MS_OWNER_PID" 2>/dev/null <<'PY'
+import hashlib
+import json
+import os
+import signal
+import shutil
+import stat
+import sys
+
+temp, run, prior_run, lease, lease_id, lease_hash, checkpoint_id, test_root, owner_pid = sys.argv[1:]
 phase = os.environ.get("MEDIA_OWNER_TEST_REPLACE_PHASE", "") if test_root else ""
+kill_phase = os.environ.get("MEDIA_OWNER_TEST_KILL_PHASE", "") if test_root else ""
 replacement = os.environ.get("REPLACE_LEASE_WITH", "") if test_root else ""
-published = terminal_changed = counter_changed = False
 terminal = os.path.join(prior_run, "terminal.json") if prior_run else ""
-terminal_existed = bool(terminal and os.path.exists(terminal))
-terminal_old = open(terminal, "rb").read() if terminal_existed else b""
-counter_existed = os.path.exists(counter)
-counter_old = open(counter, "rb").read() if counter_existed else b""
+backup = os.path.dirname(lease)
+
+def unique(pairs):
+    value = {}
+    for key, member in pairs:
+        if key in value: raise ValueError("duplicate")
+        value[key] = member
+    return value
+
+def json_bytes(value):
+    return json.loads(value, object_pairs_hook=unique)
 
 def identity(path):
     value = os.lstat(path)
@@ -379,6 +593,9 @@ def write_atomic(path, value):
         target.write(value); target.flush(); os.fsync(target.fileno())
     os.chmod(staged, 0o600)
     os.replace(staged, path)
+    directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
 
 def hook(name):
     if phase != name or not replacement:
@@ -386,45 +603,71 @@ def hook(name):
     with open(replacement, "rb") as source:
         write_atomic(lease, source.read())
 
-def rollback():
-    if counter_changed:
-        if counter_existed: write_atomic(counter, counter_old)
-        elif os.path.exists(counter): os.unlink(counter)
-    if terminal_changed:
-        if terminal_existed: write_atomic(terminal, terminal_old)
-        elif os.path.exists(terminal): os.unlink(terminal)
-    if published and os.path.isdir(run):
-        shutil.rmtree(run)
-    if os.path.isdir(temp):
-        shutil.rmtree(temp)
+def crash(name):
+    if kill_phase != name: return
+    os.kill(int(owner_pid), signal.SIGKILL)
+    os.kill(os.getpid(), signal.SIGKILL)
 
 try:
     next_lease = open(os.path.join(temp, ".next-lease"), "rb").read()
-    next_counter = open(os.path.join(temp, ".next-counter"), "rb").read()
     prior_terminal = open(os.path.join(temp, ".prior-terminal"), "rb").read() if prior_run else b""
-    for name in (".next-lease", ".next-counter", ".prior-terminal"):
+    pending = json_bytes(open(os.path.join(temp, ".begin-pending"), "rb").read())
+    manifest = json_bytes(open(os.path.join(temp, "manifest.json"), "rb").read())
+    next_state = json_bytes(next_lease)
+    if set(pending) != {"schema", "runId", "generation", "priorRunId"} or pending["schema"] != "discord-music-begin-pending.v1":
+        raise ValueError("invalid pending marker")
+    if pending["runId"] != manifest.get("runId") or pending["runId"] != next_state.get("runId") or pending["generation"] != manifest.get("generation") or pending["generation"] != next_state.get("generation"):
+        raise ValueError("invalid checkpoint binding")
+    for name, mode in (("manifest.json", 0o600), ("compose.yaml", 0o600), ("deploy.env", 0o600), ("owner.sh", 0o700), (".begin-pending", 0o600)):
+        value = os.lstat(os.path.join(temp, name))
+        if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or stat.S_IMODE(value.st_mode) != mode:
+            raise ValueError("invalid checkpoint file")
+    for name, key in (("compose.yaml", "composeHash"), ("deploy.env", "envHash"), ("owner.sh", "ownerHash")):
+        with open(os.path.join(temp, name), "rb") as source:
+            if hashlib.sha256(source.read()).hexdigest() != manifest.get(key): raise ValueError("checkpoint hash mismatch")
+    temp_id = identity(temp)
+    for name in (".next-lease", ".prior-terminal"):
         path = os.path.join(temp, name)
         if os.path.exists(path): os.unlink(path)
     hook("temp-lease-write")
     if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
-    os.replace(temp, run); published = True
-    hook("checkpoint-rename")
-    if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
-    if prior_run:
-        write_atomic(terminal, prior_terminal); terminal_changed = True
-        hook("terminal-archive")
-        if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
-    write_atomic(counter, next_counter); counter_changed = True
-    directory = os.open(os.path.dirname(counter), os.O_RDONLY | os.O_DIRECTORY)
+    directory = os.open(temp, os.O_RDONLY | os.O_DIRECTORY)
     try: os.fsync(directory)
     finally: os.close(directory)
-    hook("counter-fsync")
-    if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    crash("temp-verify")
+    os.replace(temp, run)
+    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+    hook("checkpoint-rename")
+    crash("checkpoint-rename")
+    if identity(run) != temp_id or not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    if prior_run:
+        write_atomic(terminal, prior_terminal)
+        crash("terminal-archive")
+        hook("terminal-archive")
+        if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
+    lease_staged = f"{lease}.begin.{os.path.basename(run)}.tmp"
+    with open(lease_staged, "wb") as target:
+        target.write(next_lease); target.flush(); os.fsync(target.fileno())
+    os.chmod(lease_staged, 0o600)
+    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+    crash("lease-temp-write")
     hook("final-rename")
     if not lease_matches() or not checkpoint_matches(): raise RuntimeError("binding changed")
-    write_atomic(lease, next_lease)
+    os.replace(lease_staged, lease)
+    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+    crash("active-lease-rename")
 except Exception:
-    rollback()
+    try:
+        if 'lease_staged' in locals() and os.path.exists(lease_staged): os.unlink(lease_staged)
+    except OSError:
+        pass
+    if os.path.isdir(temp): shutil.rmtree(temp)
     raise
 PY
 }
@@ -436,6 +679,7 @@ begin_run() {
   test -e "$MS_LOCK" || install -m 0600 /dev/null "$MS_LOCK"
   test "$(stat -c %U:%G:%a "$MS_LOCK")" = root:root:600 || die lock-mode
   exec 9>"$MS_LOCK"; flock -x 9
+  recover_interrupted_active_locked || die begin-active-recovery-failed
   local prior_state="" prior_restore="" prior_id="" prior_manifest="" prior_lease="" lease_path_id lease_fd_id checkpoint_path_id checkpoint_fd_id
   MS_PRIOR_LEASE_ID=absent
   MS_PRIOR_LEASE_HASH=absent
@@ -488,9 +732,10 @@ begin_run() {
     test "$(sha256sum "$MS_BACKUP/$prior_id/compose.yaml"|cut -d' ' -f1)" = "$(jq -r .composeHash "$prior_manifest")" || die prior-checkpoint-invalid
     test "$(sha256sum "$MS_BACKUP/$prior_id/deploy.env"|cut -d' ' -f1)" = "$(jq -r .envHash "$prior_manifest")" || die prior-checkpoint-invalid
   fi
+  recover_begin_runs_locked "$prior_id" || die begin-recovery-failed
   cleanup_retention_locked "$prior_id"
   local generation random run_id temp run config working env_file state health cursor now deadline
-  generation="$(test -r "$MS_COUNTER" && cat "$MS_COUNTER" || echo 0)"; [[ "$generation" =~ ^[0-9]+$ ]] || die counter-invalid; generation=$((generation+1))
+  generation="$(allocate_generation_locked)" || die counter-allocation-failed
   random="$(openssl rand -hex 16)"; run_id="$generation-$random"; temp="$MS_BACKUP/.$run_id.tmp"; run="$MS_BACKUP/$run_id"
   trap 'test -n "${temp:-}" && test -d "$temp" && rm -rf -- "$temp"' ERR
   mkdir -m 0700 "$temp"; config="$(active_config)"; working="$(dirname "$config")"; env_file="$working/.env"
@@ -510,15 +755,19 @@ begin_run() {
   jq -cn --arg schema "$MS_SCHEMA" --arg runId "$run_id" --argjson generation "$generation" --arg selectedSha "$MS_SHA" \
     --argjson sequence 0 --argjson deadline "$deadline" --arg eventCursor "$cursor" \
     '{schema:$schema,runId:$runId,generation:$generation,selectedSha:$selectedSha,sequence:$sequence,deadlineClock:"CLOCK_BOOTTIME",deadlineBoottime:$deadline,eventCursor:$eventCursor,state:"active",restoreState:"idle",stableSamples:0,lateDaemonDetected:false,reconcilePasses:0,eventProof:null,acceptedOperations:[],activeMutation:null}' >"$temp/.next-lease"
-  printf '%s\n' "$generation" >"$temp/.next-counter"
   printf '%s' "$prior_lease" >"$temp/.prior-terminal"
-  chmod 0600 "$temp/.next-lease" "$temp/.next-counter" "$temp/.prior-terminal"
-  sync -f "$temp/.next-lease"; sync -f "$temp/.next-counter"; sync -f "$temp/.prior-terminal"; sync -f "$temp"
-  verify_prior_lease_locked; verify_prior_checkpoint_locked
-  commit_begin_run_locked "$temp" "$run" "${prior_id:+$MS_BACKUP/$prior_id}" || die begin-transaction-failed
+  jq -cn --arg runId "$run_id" --argjson generation "$generation" --arg priorRunId "$prior_id" '{schema:"discord-music-begin-pending.v1",runId:$runId,generation:$generation,priorRunId:(if $priorRunId=="" then null else $priorRunId end)}' >"$temp/.begin-pending"
+  chmod 0600 "$temp/.next-lease" "$temp/.prior-terminal" "$temp/.begin-pending"
+  sync -f "$temp/.next-lease"; sync -f "$temp/.prior-terminal"; sync -f "$temp/.begin-pending"; sync -f "$temp"
+  if ! (verify_prior_lease_locked && verify_prior_checkpoint_locked); then
+    rm -rf -- "$temp"
+    die begin-binding-changed
+  fi
+  publish_begin_run_locked "$temp" "$run" "${prior_id:+$MS_BACKUP/$prior_id}" || die begin-transaction-failed
   MS_PRIOR_LEASE_ID="$(stat -c %d:%i "$MS_LEASE")"; MS_PRIOR_LEASE_HASH="$(sha256sum "$MS_LEASE"|cut -d' ' -f1)"
   MS_PRIOR_CHECKPOINT_ID=absent; MS_PRIOR_RUN_ID=""
   nohup setsid "$run/owner.sh" watchdog "$run_id" >/dev/null 2>&1 </dev/null 9>&- &
+  rm -f -- "$run/.begin-pending"; sync -f "$run"
   apply_retention_locked
   cleanup_stale_lease_temps_locked true
   repair_retained_tags_locked >/dev/null

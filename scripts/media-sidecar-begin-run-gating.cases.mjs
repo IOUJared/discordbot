@@ -124,19 +124,20 @@ for (const phase of [
   "counter-fsync",
   "final-rename",
 ]) {
-  test(`begin-run rolls back a lease replacement at ${phase}`, () => {
+  test(`begin-run leaves a recoverable consumed generation after replacement at ${phase}`, () => {
     withRetentionFixture((fixture) => {
       fixture.addArchive({ generation: 1 })
       const replacement = JSON.stringify({ replacedAt: phase })
       const before = snapshot(fixture)
-      const expected = structuredClone(before)
-      expected.backup["active.json"] = Buffer.from(replacement).toString("base64")
 
       const result = fixture.invoke(fixture.replaceLeaseAtPhase(replacement, phase))
 
       assert.equal(result.status, 1, result.stderr)
-      assert.match(result.stderr, /begin-transaction-failed/u)
-      assert.deepEqual(snapshot(fixture), expected)
+      assert.match(result.stderr, /begin-binding-changed|begin-transaction-failed|lease-replaced/u)
+      assert.equal(fixture.read(fixture.lease), replacement)
+      assert.equal(fixture.read(fixture.counter), "100\n")
+      assert.equal(fixture.read(fixture.dockerMutations), before.docker)
+      assert.equal(fixture.read(fixture.volumeMarker), before.volume)
       assert.equal(
         readdirSync(fixture.backup).some((name) => name.includes(".tmp")),
         false,

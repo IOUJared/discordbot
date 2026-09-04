@@ -74,7 +74,7 @@ test("begin-run is monotonic, random, archived, and unique by phase", () => {
   assert.equal(instance.archives.size, 2)
 })
 
-test("begin-run crash points never publish a partial active checkpoint", () => {
+test("in-memory model mirrors consumed-generation pre-active crashes", () => {
   for (const crashAt of ["after_counter_fsync", "after_temp_verify", "after_checkpoint_rename"]) {
     const instance = model()
     assert.throws(

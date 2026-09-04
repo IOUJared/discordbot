@@ -173,6 +173,7 @@ export function withRetentionFixture(callback) {
       backup,
       config,
       counter,
+      dockerState,
       dockerMutations,
       envFile,
       injectionMarker,
@@ -185,6 +186,7 @@ export function withRetentionFixture(callback) {
         const environment = replacementEnvironment(value)
         return { ...environment, MEDIA_OWNER_TEST_REPLACE_PHASE: phase }
       },
+      killAtPhase: (phase) => ({ MEDIA_OWNER_TEST_KILL_PHASE: phase }),
       replaceCurrentWithSymlink: () => {
         const sentinel = join(fixture, "external-sentinel")
         mkdirSync(sentinel, { mode: 0o700 })
