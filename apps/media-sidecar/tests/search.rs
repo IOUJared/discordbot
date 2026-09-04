@@ -21,13 +21,11 @@ use std::{collections::BTreeSet, sync::atomic::Ordering, time::Duration};
 
 use search::SearchResponse;
 use serde_json::{Value, json};
-use support::{
-    FakeServer, Manifest, RAW_FIXTURE, ResponsePlan, fixture_body, read_fixture, run_search,
-};
+use support::{FakeServer, Manifest, ResponsePlan, fixture_body, read_fixture, run_search};
 
 #[tokio::test]
 async fn search_manifest_parity() {
-    // Given: the shared manifest and its only Innertube raw fixture.
+    // Given: every shared Innertube raw fixture and its declared response fixture.
     let manifest: Manifest = serde_json::from_slice(&read_fixture("manifest.json"))
         .expect("manifest must be valid JSON");
     let items = manifest
@@ -35,35 +33,39 @@ async fn search_manifest_parity() {
         .iter()
         .filter(|item| item.source_kind == "innertube")
         .collect::<Vec<_>>();
-    assert_eq!(items.len(), 1, "every Innertube item must be consumed");
-    let item = items[0];
-    assert_eq!(item.path, format!("raw/{RAW_FIXTURE}"));
-    assert_eq!(item.expected.outcome, "response");
-    let expected_path = item
-        .expected
-        .fixture
-        .as_deref()
-        .expect("response fixture path must exist");
-    let expected: SearchResponse = serde_json::from_slice(&read_fixture(expected_path))
-        .expect("expected response must be valid JSON");
-    let server = FakeServer::spawn(ResponsePlan::Body(fixture_body().to_vec()), 1)
-        .await
-        .expect("fake server must bind");
-
-    // When: Rust searches the raw bytes through the real HTTP adapter.
-    let actual = run_search(&server)
-        .await
-        .expect("fixture search must succeed");
-
-    // Then: the corpus-normalized result matches and no sixth ordinal leaks.
-    assert_eq!(actual, expected);
-    assert!(
-        actual
-            .results
+    assert_eq!(items.len(), 2, "every Innertube item must be consumed");
+    assert_eq!(
+        items
             .iter()
-            .all(|result| result.track.id != "outside-window-5")
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "raw/innertube-ordinal-malformed-valid.json",
+            "raw/innertube-padding.json",
+        ]
     );
-    assert_eq!(server.calls.load(Ordering::SeqCst), 1);
+    for item in items {
+        assert_eq!(item.expected.outcome, "response");
+        let expected_path = item
+            .expected
+            .fixture
+            .as_deref()
+            .expect("response fixture path must exist");
+        let expected: SearchResponse = serde_json::from_slice(&read_fixture(expected_path))
+            .expect("expected response must be valid JSON");
+        let server = FakeServer::spawn(ResponsePlan::Body(read_fixture(&item.path)), 1)
+            .await
+            .expect("fake server must bind");
+
+        // When: Rust searches the declared raw bytes through the real HTTP adapter.
+        let actual = run_search(&server)
+            .await
+            .expect("fixture search must succeed");
+
+        // Then: every declared corpus-normalized response matches exactly.
+        assert_eq!(actual, expected);
+        assert_eq!(server.calls.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[tokio::test]
@@ -164,6 +166,67 @@ async fn slot_four_is_included_and_slot_five_is_excluded() {
     );
 }
 
+#[tokio::test]
+async fn padded_text_matches_node_track_normalization() {
+    // Given: ECMAScript-trimmable edge whitespace, empty-after-trim, and overlong UTF-16 slots.
+    let overlong_title = "😀".repeat(256) + "a";
+    let response = run_custom_search(vec![
+        renderer_with_text(
+            "padded-0",
+            "\u{feff} Padded Title \u{a0}",
+            "\u{a0} Padded Artist \u{feff}",
+            "1:02",
+        ),
+        renderer_with_text("blank-after-trim-1", "\u{feff}\u{a0}", "Artist", "2:00"),
+        renderer_with_text(
+            "padded-2",
+            "\u{200a} Second Title \u{2029}",
+            "\u{202f} Second Artist \u{205f}",
+            "2:03",
+        ),
+        renderer_with_text("overlong-utf16-3", &overlong_title, "Artist", "3:00"),
+    ])
+    .await;
+
+    // When: the same raw renderer shape crosses the Rust boundary.
+
+    // Then: text matches Node's trimmed TrackSchema output and the blank slot still consumes ordinal one.
+    assert_eq!(
+        response
+            .results
+            .iter()
+            .map(|result| {
+                (
+                    result.track.id.as_str(),
+                    result.track.title.as_str(),
+                    result.track.artist.as_str(),
+                    result.track.url.as_str(),
+                    result.track.duration_ms,
+                    result.score,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "padded-0",
+                "Padded Title",
+                "Padded Artist",
+                "https://www.youtube.com/watch?v=padded-0",
+                62_000,
+                1.0,
+            ),
+            (
+                "padded-2",
+                "Second Title",
+                "Second Artist",
+                "https://www.youtube.com/watch?v=padded-2",
+                123_000,
+                0.8,
+            ),
+        ]
+    );
+}
+
 async fn run_custom_search(renderers: Vec<Value>) -> SearchResponse {
     let body = serde_json::to_vec(&json!({
         "contents": renderers
@@ -185,11 +248,15 @@ fn malformed_renderer() -> Value {
 }
 
 fn valid_renderer(id: &str) -> Value {
+    renderer_with_text(id, id, "Artist", "1:00")
+}
+
+fn renderer_with_text(id: &str, title: &str, artist: &str, duration: &str) -> Value {
     json!({
         "videoId": id,
-        "title": { "runs": [{ "text": id }] },
-        "ownerText": { "runs": [{ "text": "Artist" }] },
-        "lengthText": { "simpleText": "1:00" },
+        "title": { "runs": [{ "text": title }] },
+        "ownerText": { "runs": [{ "text": artist }] },
+        "lengthText": { "simpleText": duration },
         "thumbnail": { "thumbnails": [{ "url": format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg") }] },
     })
 }

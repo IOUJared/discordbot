@@ -1,10 +1,30 @@
+import { readFile } from "node:fs/promises"
+
+import { TrackSchema } from "@discord-music/contracts"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { z } from "zod"
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }))
 
 vi.mock("ky", () => ({ default: { post } }))
 
-import { youtubeSearchClient } from "../../src/media/youtube-search.js"
+import { parseYouTubeSearchResponse, youtubeSearchClient } from "../../src/media/youtube-search.js"
+
+const fixtures = new URL("../../../../spec/media-sidecar/v1/", import.meta.url)
+const searchResponseSchema = z
+  .object({
+    version: z.literal(1),
+    results: z.array(
+      z
+        .object({
+          track: TrackSchema.extend({ artworkUrl: z.url() }),
+          score: z.number().min(0).max(1),
+          bitrateKbps: z.null(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
 
 const response = {
   contents: {
@@ -61,5 +81,23 @@ describe("YouTube low-latency search boundary", () => {
       "https://www.youtube.com/youtubei/v1/search",
       expect.objectContaining({ timeout: 2_500 }),
     )
+  })
+
+  it("normalizes the padded shared Innertube fixture like the v1 contract", async () => {
+    // Given: the shared raw corpus has ECMAScript-trimmable text and a blank-after-trim slot.
+    const raw: unknown = JSON.parse(
+      await readFile(new URL("raw/innertube-padding.json", fixtures), "utf8"),
+    )
+    const expected = searchResponseSchema.parse(
+      JSON.parse(
+        await readFile(new URL("fixtures/responses/search-padding.json", fixtures), "utf8"),
+      ),
+    )
+
+    // When: the retained Node parser normalizes that raw renderer response.
+    const actual = parseYouTubeSearchResponse(raw)
+
+    // Then: title/artist trimming, IDs, URLs, durations, scores, and order match the shared fixture exactly.
+    expect(actual).toEqual(expected.results)
   })
 })

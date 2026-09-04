@@ -11,6 +11,15 @@
       "expected": { "outcome": "response", "fixture": "fixtures/responses/search-ordinal.json" }
     },
     {
+      "path": "raw/innertube-padding.json",
+      "sha256": "4a75fade2afba2762431825512f94cc4d2398954b293d9b8db093ad10ebc9c36",
+      "sourceKind": "innertube",
+      "classification": "useful",
+      "nodeConsumer": "planned: apps/server/tests/media/youtube-search.test.ts#normalizes-padded-shared-innertube-fixture",
+      "rustConsumer": "planned: apps/media-sidecar/tests/search.rs#search_manifest_parity",
+      "expected": { "outcome": "response", "fixture": "fixtures/responses/search-padding.json" }
+    },
+    {
       "path": "raw/ytdlp-resolve-valid.json",
       "sha256": "5bc688fd03e54ea815571e5541c7c7ae61427c7cc999f2b6ae7dfc21bc49d797",
       "sourceKind": "yt-dlp",

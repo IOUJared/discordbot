@@ -124,7 +124,38 @@ fn concatenate_runs(text: &TextRuns) -> Option<String> {
     if text.runs.is_empty() || text.runs.iter().any(|run| run.text.is_empty()) {
         return None;
     }
-    Some(text.runs.iter().map(|run| run.text.as_str()).collect())
+    let text = text
+        .runs
+        .iter()
+        .map(|run| run.text.as_str())
+        .collect::<String>();
+    let text = text.trim_matches(is_ecmascript_whitespace);
+    if text.is_empty() || text.encode_utf16().count() > 512 {
+        return None;
+    }
+    Some(text.to_owned())
+}
+
+const fn is_ecmascript_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000a}'
+            | '\u{000b}'
+            | '\u{000c}'
+            | '\u{000d}'
+            | '\u{0020}'
+            | '\u{00a0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
 }
 
 fn parse_duration_ms(value: &str) -> Option<u64> {

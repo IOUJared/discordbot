@@ -87,13 +87,14 @@ describe("YouTubeSidecarClient protocol", () => {
     await expect(client.health()).resolves.toEqual({ version: 1, status: "ok" })
 
     // Then: all rows were consumed once, using opaque private correlations.
-    expect(requests).toHaveLength(3)
+    expect(requests).toHaveLength(4)
     expect(requests.every(({ correlation }) => /^[0-9a-f-]{36}$/u.test(correlation ?? ""))).toBe(
       true,
     )
-    expect(new Set(requests.map(({ correlation }) => correlation)).size).toBe(3)
+    expect(new Set(requests.map(({ correlation }) => correlation)).size).toBe(4)
     expect(requests.map(({ path, body }) => [path, body === "" ? null : JSON.parse(body)])).toEqual(
       [
+        ["/v1/search", { version: 1, query: "Northern Lines" }],
         ["/v1/search", { version: 1, query: "Northern Lines" }],
         [
           "/v1/resolve",

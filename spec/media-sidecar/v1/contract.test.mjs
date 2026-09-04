@@ -3,6 +3,8 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
+import { SEARCH_CONTRACT_CASES } from "./search-contract-cases.mjs"
+
 const root = new URL(".", import.meta.url)
 const path = (relative) => resolve(root.pathname, relative)
 const json = (relative) => JSON.parse(readFileSync(path(relative), "utf8"))
@@ -10,6 +12,7 @@ const sha256 = (relative) => createHash("sha256").update(readFileSync(path(relat
 const keys = (value) => Object.keys(value).sort()
 const exactKeys = (value, expected) => assert.deepEqual(keys(value), [...expected].sort())
 const canonicalUrl = (id) => `https://www.youtube.com/watch?v=${id}`
+const canonicalArtworkUrl = (id) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
 const errorCodes = new Map([
   [400, "invalid_request"],
   [413, "payload_too_large"],
@@ -35,6 +38,8 @@ function validateTrack(track) {
   assert.match(track.id, /^[A-Za-z0-9_-]{1,128}$/u)
   assert.equal(track.url, canonicalUrl(track.id))
   assert.ok(Number.isInteger(track.durationMs) && track.durationMs >= 0)
+  assert.ok(track.title === track.title.trim() && track.title.length >= 1 && track.title.length <= 512)
+  assert.ok(track.artist === track.artist.trim() && track.artist.length >= 1 && track.artist.length <= 512)
 }
 
 function validateResult(result) {
@@ -137,27 +142,35 @@ function validateNegativeCorpus() {
 }
 
 function validateOrdinals(manifest) {
-  const ordinal = manifest.raw.find(({ path: itemPath }) => itemPath === "raw/innertube-ordinal-malformed-valid.json")
-  assert.ok(ordinal)
-  const raw = json(ordinal.path)
-  assert.equal(raw.contents.length, 6)
-  assert.equal(raw.contents[0].videoRenderer.videoId, 7)
-  assert.equal(raw.contents[1].videoRenderer.videoId, "valid-ordinal-1")
-  assert.equal(raw.contents[5].videoRenderer.videoId, "outside-window-5")
-  assert.deepEqual(ordinal.expected, { outcome: "response", fixture: "fixtures/responses/search-ordinal.json" })
-  const results = json(ordinal.expected.fixture).results
-  assert.equal(results.length, 1)
-  assert.equal(results[0].track.id, "valid-ordinal-1")
-  assert.equal(results[0].score, 0.9)
+  for (const expected of SEARCH_CONTRACT_CASES) {
+    const item = manifest.raw.find(({ path: itemPath }) => itemPath === expected.rawPath)
+    assert.ok(item)
+    assert.deepEqual(item.expected, { outcome: "response", fixture: expected.fixturePath })
+    const raw = json(item.path)
+    assert.equal(raw.contents.length, expected.rawSlots)
+    assert.deepEqual(
+      [raw.contents[0], raw.contents[1], raw.contents[5]].map(({ videoRenderer }) => videoRenderer.videoId),
+      expected.rawSlotIds,
+    )
+    const results = json(item.expected.fixture).results
+    assert.deepEqual(
+      results.map(({ track, score, bitrateKbps }) => [track.id, track.title, track.artist, track.durationMs, score, bitrateKbps]),
+      expected.results.map((result) => [...result, null]),
+    )
+    for (const { track } of results) {
+      assert.equal(track.url, canonicalUrl(track.id))
+      assert.equal(track.artworkUrl, canonicalArtworkUrl(track.id))
+    }
+    assert.ok(results.every(({ track }) => track.id !== expected.excludedId))
+  }
 }
 
 function validateFixtureSecrecy(manifest) {
   const fixturePaths = [
     ...manifest.raw.map(({ path: itemPath }) => itemPath),
+    ...manifest.raw.flatMap(({ expected }) => (expected.fixture === undefined ? [] : [expected.fixture])),
     "fixtures/requests/search.json",
     "fixtures/requests/resolve.json",
-    "fixtures/responses/search-ordinal.json",
-    "fixtures/responses/resolve.json",
     "fixtures/negative.json",
   ]
   for (const fixturePath of fixturePaths) {
@@ -194,8 +207,8 @@ function validateContractText() {
   const contract = readFileSync(path("contract.md"), "utf8")
   for (const [status, code] of errorCodes) assert.match(contract, new RegExp(`${status}.*${code}`, "u"))
   for (const sourceTest of parserTests) assert.match(contract, new RegExp(sourceTest.replace(/[()[\].?+*^$]/gu, "\\$&"), "u"))
-  assert.match(contract, /valid ordinal 1.*0\.9/iu)
-  assert.match(contract, /ordinal 5.*omitted/iu)
+  assert.match(contract, /valid slots 1 through 4.*0\.9.*0\.8.*0\.7.*0\.6/iu)
+  assert.match(contract, /slot 5.*omitted/iu)
   for (const { cause, node } of json("fixtures/cause-status-table.json")) {
     assert.ok(contract.toLocaleLowerCase("en-US").includes(cause.toLocaleLowerCase("en-US")))
     assert.ok(contract.includes(node))

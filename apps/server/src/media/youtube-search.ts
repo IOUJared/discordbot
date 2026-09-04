@@ -64,16 +64,19 @@ export function parseYouTubeSearchResponse(value: unknown): readonly SearchResul
     const thumbnail = renderer.thumbnail.thumbnails.at(-1)
     if (thumbnail === undefined) return []
 
+    const track = TrackSchema.safeParse({
+      id: renderer.videoId,
+      provider: "youtube",
+      title: renderer.title.runs.map(({ text }) => text).join(""),
+      artist: renderer.ownerText.runs.map(({ text }) => text).join(""),
+      url: `https://www.youtube.com/watch?v=${encodeURIComponent(renderer.videoId)}`,
+      durationMs: DurationMsSchema.parse(durationSeconds(renderer.lengthText.simpleText) * 1_000),
+      artworkUrl: thumbnail.url,
+    })
+    if (!track.success) return []
+
     return {
-      track: TrackSchema.parse({
-        id: renderer.videoId,
-        provider: "youtube",
-        title: renderer.title.runs.map(({ text }) => text).join(""),
-        artist: renderer.ownerText.runs.map(({ text }) => text).join(""),
-        url: `https://www.youtube.com/watch?v=${encodeURIComponent(renderer.videoId)}`,
-        durationMs: DurationMsSchema.parse(durationSeconds(renderer.lengthText.simpleText) * 1_000),
-        artworkUrl: thumbnail.url,
-      }),
+      track: track.data,
       score: Math.max(0, 1 - index * 0.1),
       bitrateKbps: null,
     }
