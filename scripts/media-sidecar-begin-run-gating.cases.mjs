@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import { join } from "node:path"
 import test from "node:test"
 import { withRetentionFixture } from "./media-sidecar-retention-test-support.mjs"
@@ -65,12 +65,65 @@ for (const [name, mutate] of rejectedLeases) {
   })
 }
 
+test("begin-run rejects a symlinked current checkpoint before mutation", () => {
+  withRetentionFixture((fixture) => {
+    const expired = fixture.addArchive({ generation: 1 })
+    const sentinel = fixture.replaceCurrentWithSymlink()
+    const before = snapshot(fixture)
+
+    const result = fixture.invoke()
+
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /prior-checkpoint-invalid/u)
+    assert.deepEqual(snapshot(fixture), before)
+    assert.equal(fixture.read(join(sentinel, "untouched")), "sentinel\n")
+    assert.equal(fixture.exists(expired.run), true)
+  })
+})
+
+test("begin-run rejects a wrong-mode current checkpoint before mutation", () => {
+  withRetentionFixture((fixture) => {
+    const expired = fixture.addArchive({ generation: 1 })
+    chmodSync(fixture.initialCurrent.run, 0o755)
+    const before = snapshot(fixture)
+
+    const result = fixture.invoke()
+
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /prior-checkpoint-invalid/u)
+    assert.deepEqual(snapshot(fixture), before)
+    assert.equal(fixture.exists(expired.run), true)
+  })
+})
+
+test("begin-run detects lease pathname replacement at the Docker boundary", () => {
+  withRetentionFixture((fixture) => {
+    const expired = fixture.addArchive({ generation: 1 })
+    const replacement = JSON.stringify({ replaced: true })
+    const before = snapshot(fixture)
+
+    const result = fixture.invoke(fixture.replaceLeaseDuringDocker(replacement))
+
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /lease-replaced/u)
+    assert.equal(fixture.read(fixture.lease), replacement)
+    assert.equal(fixture.read(fixture.counter), "99\n")
+    assert.equal(fixture.exists(expired.run), true)
+    assert.equal(fixture.read(fixture.dockerMutations), before.docker)
+    assert.equal(fixture.read(fixture.config), before.compose)
+    assert.equal(fixture.read(fixture.envFile), before.environment)
+    assert.equal(fixture.read(fixture.volumeMarker), before.volume)
+    assert.equal(fixture.exists(fixture.replacementMarker), true)
+  })
+})
+
 for (const state of ["committed", "expired"]) {
   test(`begin-run accepts valid ${state} terminal lease exactly once`, () => {
     withRetentionFixture((fixture) => {
       const expired = fixture.addArchive({ generation: 1 })
       const prior = fixture.addArchive({ generation: 98, state, ageMs: 60_000 })
       const priorLease = JSON.stringify(fixture.setLease(prior))
+      rmSync(join(prior.run, "terminal.json"))
 
       const result = fixture.invoke()
 

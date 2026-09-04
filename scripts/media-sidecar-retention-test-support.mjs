@@ -7,11 +7,13 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { installOwnerAdapters } from "./media-sidecar-owner-adapters.mjs"
 
 const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
 const day = 86_400_000
@@ -20,95 +22,34 @@ const hex = (character, length) => character.repeat(length)
 
 export function withRetentionFixture(callback) {
   const fixture = mkdtempSync(join(tmpdir(), "media-retention-owner-"))
-  const backup = join(fixture, "backups")
-  const repo = join(fixture, "repo")
+  const backup = join(fixture, "root", "discord-music-rollbacks")
+  const repo = join(fixture, "opt", "discord-music")
   const bin = join(fixture, "bin")
-  const lock = join(fixture, "owner.lock")
+  const lock = join(fixture, "run", "lock", "discord-music-deploy.lock")
   const lease = join(backup, "active.json")
   const counter = join(backup, "run-counter")
   const deploy = join(repo, "deploy")
   const config = join(deploy, "compose.yaml")
   const envFile = join(deploy, ".env")
-  const stateJson = join(fixture, "state.json")
   const volumeMarker = join(fixture, "volume-state")
   const dockerState = join(fixture, "docker-state.tsv")
   const dockerMutations = join(fixture, "docker-mutations.log")
   const injectionMarker = join(fixture, "injected")
+  const replacementMarker = join(fixture, "lease-replaced")
   const ownerPath = join(fixture, "owner.sh")
-  for (const path of [backup, deploy, bin]) mkdirSync(path, { recursive: true })
+  for (const path of [backup, deploy, bin, join(fixture, "run", "lock")])
+    mkdirSync(path, { recursive: true })
+  chmodSync(backup, 0o700)
   for (const path of [lock, dockerState, dockerMutations, volumeMarker])
     writeFileSync(path, "unchanged\n")
   writeFileSync(counter, "99\n")
   writeFileSync(config, "services: {}\n")
   writeFileSync(envFile, "MEDIA_SIDECAR_MODE=rust\n")
-  writeFileSync(
-    stateJson,
-    JSON.stringify({
-      configHash: hex("1", 64),
-      envHash: hex("2", 64),
-      git: hex("3", 40),
-      mode: "rust",
-      serverImage: `sha256:${hex("4", 64)}`,
-      sidecarImage: `sha256:${hex("5", 64)}`,
-      serverRef: `discord-music-server:${hex("3", 40)}`,
-      sidecarRef: `discord-music-media-sidecar:${hex("3", 40)}`,
-      sidecarPresent: true,
-      publicHealth: { status: "ok", discord: "ready", voice: "idle", uptimeType: "number" },
-      volumes: [{ name: "discord-data", destination: "/app/data" }],
-    }),
-  )
 
-  const dispatch = owner.indexOf(['case "', "$", '{1:-}" in'].join(""))
-  const injected = `
-require_root() { :; }
-require_paths() { :; }
-stat() {
-  if test "$*" = "-c %U:%G:%a $MS_LOCK"; then printf 'root:root:600\n'; else command stat "$@"; fi
-}
-active_config() { printf '%s' "$TEST_CONFIG"; }
-state_json() { command cat "$TEST_STATE_JSON"; }
-public_health() { printf '%s\n' '{"status":"ok","discord":"ready","voice":"idle","uptime":10}'; }
-`
-  writeFileSync(ownerPath, `${owner.slice(0, dispatch)}${injected}${owner.slice(dispatch)}`)
+  for (const path of [lock, counter, config, envFile]) chmodSync(path, 0o600)
+  writeFileSync(ownerPath, owner)
   chmodSync(ownerPath, 0o700)
-  writeFileSync(
-    join(bin, "docker"),
-    `#!/usr/bin/env bash
-set -eu
-state="$DOCKER_STATE"
-mutations="$DOCKER_MUTATIONS"
-if test "$1" = ps; then
-  test -z "${"$"}{IN_USE_IMAGE:-}" || printf 'current-container\\n'
-  exit 0
-fi
-if test "$1" = inspect; then
-  test "$3" = '{{.Image}}' && test "$4" = current-container
-  printf '%s\\n' "$IN_USE_IMAGE"
-  exit 0
-fi
-if test "$1 $2" = 'image inspect'; then
-  if test "$3" = -f; then format="$4"; target="$5"; else target="$3"; format=exists; fi
-  row="$(awk -F '\\t' -v target="$target" '$1==target {print; exit}' "$state")"
-  test -n "$row" || exit 1
-  id="$(printf '%s' "$row" | cut -f2)"; revision="$(printf '%s' "$row" | cut -f3)"
-  if test "${"$"}{TAG_MISMATCH:-0}" = 1 && case "$target" in *-server) true;; *) false;; esac; then id="sha256:${hex("f", 64)}"; fi
-  test "${"$"}{WRONG_REVISION:-0}" != 1 || revision="${hex("e", 40)}"
-  case "$format" in
-    exists) : ;;
-    '{{.Id}}') printf '%s\\n' "$id" ;;
-    '{{index .Config.Labels "org.opencontainers.image.revision"}}') printf '%s\\n' "$revision" ;;
-    *) exit 1 ;;
-  esac
-  exit 0
-fi
-case "$1 $2" in
-  'image rm'|'image tag'|'container rm'|'volume rm') printf '%s\\n' "$*" >>"$mutations"; exit 0 ;;
-esac
-printf '%s\n' "$*" >>"$mutations"
-exit 1
-`,
-  )
-  chmodSync(join(bin, "docker"), 0o700)
+  installOwnerAdapters(bin)
 
   const addArchive = ({ generation, state = "committed", restoreState, ageMs = 8 * day }) => {
     const runId = `${generation}-${hex(String(generation % 10), 32)}`
@@ -121,7 +62,7 @@ exit 1
     const sidecarImage = `sha256:${hex(String((generation + 5) % 10), 64)}`
     const serverTag = `discord-music-rollback:${runId}-server`
     const sidecarTag = `discord-music-rollback:${runId}-sidecar`
-    mkdirSync(run)
+    mkdirSync(run, { mode: 0o700 })
     writeFileSync(join(run, "compose.yaml"), compose)
     writeFileSync(join(run, "deploy.env"), env)
     const manifest = {
@@ -130,8 +71,8 @@ exit 1
       generation,
       selectedSha,
       kind: "deployment",
-      configPath: "/opt/discord-music/deploy/compose.yaml",
-      workingDir: "/opt/discord-music/deploy",
+      configPath: config,
+      workingDir: deploy,
       eventCursor: "2026-09-04T00:00:00Z",
       composeHash: digest(compose),
       envHash: digest(env),
@@ -181,6 +122,8 @@ exit 1
     }
     writeFileSync(join(run, "manifest.json"), JSON.stringify(manifest))
     writeFileSync(join(run, "terminal.json"), JSON.stringify(terminal))
+    for (const file of ["compose.yaml", "deploy.env", "manifest.json", "terminal.json"])
+      chmodSync(join(run, file), 0o600)
     writeFileSync(
       dockerState,
       `${readFileSync(dockerState, "utf8")}${serverTag}\t${serverImage}\t${priorGit}\n${serverImage}\t${serverImage}\t${priorGit}\n${sidecarTag}\t${sidecarImage}\t${priorGit}\n${sidecarImage}\t${sidecarImage}\t${priorGit}\n`,
@@ -193,6 +136,7 @@ exit 1
     const value = structuredClone(archive.terminal)
     mutate(value)
     writeFileSync(lease, JSON.stringify(value))
+    chmodSync(lease, 0o600)
     return value
   }
   const invoke = (environment = {}) =>
@@ -200,17 +144,17 @@ exit 1
       encoding: "utf8",
       env: {
         ...process.env,
-        MEDIA_BACKUP_ROOT: backup,
-        MEDIA_LEASE_FILE: lease,
-        MEDIA_LOCK_FILE: lock,
-        MEDIA_REPO: repo,
-        MEDIA_RUN_COUNTER: counter,
+        MEDIA_OWNER_TEST_ROOT: fixture,
+        MEDIA_OWNER_TEST_UID: String(process.getuid()),
         MEDIA_SELECTED_SHA: hex("8", 40),
         MEDIA_OWNER_B64: Buffer.from("#!/usr/bin/env bash\nexit 0\n").toString("base64"),
+        MEDIA_COMPOSE_PROJECT: "deploy",
         TEST_CONFIG: config,
-        TEST_STATE_JSON: stateJson,
+        TEST_LOCK: lock,
         DOCKER_STATE: dockerState,
         DOCKER_MUTATIONS: dockerMutations,
+        LEASE_PATH: lease,
+        REPLACEMENT_MARKER: replacementMarker,
         PATH: `${bin}:${process.env.PATH}`,
         ...environment,
       },
@@ -229,6 +173,21 @@ exit 1
       initialCurrent,
       invoke,
       lease,
+      replacementMarker,
+      replaceLeaseDuringDocker: (value) => {
+        const path = join(fixture, "replacement-lease.json")
+        writeFileSync(path, value)
+        chmodSync(path, 0o600)
+        return { REPLACE_LEASE_WITH: path }
+      },
+      replaceCurrentWithSymlink: () => {
+        const sentinel = join(fixture, "external-sentinel")
+        mkdirSync(sentinel, { mode: 0o700 })
+        writeFileSync(join(sentinel, "untouched"), "sentinel\n")
+        rmSync(initialCurrent.run, { recursive: true })
+        symlinkSync(sentinel, initialCurrent.run)
+        return sentinel
+      },
       setLease,
       volumeMarker,
       exists: existsSync,

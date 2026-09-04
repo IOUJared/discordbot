@@ -4,9 +4,10 @@ set -Eeuo pipefail
 umask 077
 
 readonly MS_SCHEMA="discord-music-deploy-lease.v1"
-readonly MS_REPO="${MEDIA_REPO:-/opt/discord-music}"
-readonly MS_BACKUP="${MEDIA_BACKUP_ROOT:-/root/discord-music-rollbacks}"
-readonly MS_LOCK="${MEDIA_LOCK_FILE:-/run/lock/discord-music-deploy.lock}"
+readonly MS_TEST_ROOT="${MEDIA_OWNER_TEST_ROOT:-}"
+readonly MS_REPO="${MEDIA_REPO:-$MS_TEST_ROOT/opt/discord-music}"
+readonly MS_BACKUP="${MEDIA_BACKUP_ROOT:-$MS_TEST_ROOT/root/discord-music-rollbacks}"
+readonly MS_LOCK="${MEDIA_LOCK_FILE:-$MS_TEST_ROOT/run/lock/discord-music-deploy.lock}"
 readonly MS_LEASE="${MEDIA_LEASE_FILE:-$MS_BACKUP/active.json}"
 readonly MS_COUNTER="${MEDIA_RUN_COUNTER:-$MS_BACKUP/run-counter}"
 readonly MS_PROJECT="${MEDIA_COMPOSE_PROJECT:-}"
@@ -17,15 +18,17 @@ readonly MS_SELF="${BASH_SOURCE[0]:-/dev/stdin}"
 readonly MS_RETENTION_DAYS="${MEDIA_RETENTION_DAYS:-7}"
 readonly MS_DANGLING_RETENTION_DAYS="${MEDIA_DANGLING_RETENTION_DAYS:-1}"
 readonly MS_LEASE_TEMP_STALE_SECONDS=300
+readonly MS_EXPECT_UID="${MEDIA_OWNER_TEST_UID:-0}"
 
 die() { printf '{"ok":false,"stage":"%s"}\n' "$1" >&2; exit 1; }
 boottime() { awk '{printf "%d", $1}' /proc/uptime; }
 atomic_file() {
-  local target="$1" mode="$2" temp
+  local target="$1" mode="$2" verify="${3:-false}" temp
   temp="${target}.tmp.$$"
   cat >"$temp"
   chmod "$mode" "$temp"
   sync -f "$temp"
+  test "$verify" != true || verify_prior_lease_locked
   mv -f "$temp" "$target"
   sync -f "$(dirname "$target")"
 }
@@ -49,8 +52,83 @@ with open(sys.argv[1], encoding="utf-8") as source:
     json.load(source, object_pairs_hook=unique_object, parse_constant=invalid_constant)
 PY
 }
+secure_owner_path() {
+  python3 - "$MS_TEST_ROOT" "$MS_BACKUP" "$1" "$MS_EXPECT_UID" "$2" 2>/dev/null <<'PY'
+import os
+import stat
+import sys
+
+anchor_value, backup_value, target_value, uid_value, kind = sys.argv[1:]
+anchor = os.path.abspath(anchor_value or "/")
+backup = os.path.abspath(backup_value)
+target = os.path.abspath(target_value)
+uid = int(uid_value)
+
+def fail():
+    raise ValueError("unsafe owner path")
+
+def inspect(path, expected_kind, exact_mode=None):
+    value = os.lstat(path)
+    if stat.S_ISLNK(value.st_mode) or value.st_uid != uid:
+        fail()
+    if expected_kind == "directory" and not stat.S_ISDIR(value.st_mode):
+        fail()
+    if expected_kind == "file" and not stat.S_ISREG(value.st_mode):
+        fail()
+    mode = stat.S_IMODE(value.st_mode)
+    if exact_mode is not None and mode != exact_mode:
+        fail()
+    if expected_kind == "directory" and mode & 0o022:
+        fail()
+
+if os.path.commonpath((anchor, backup)) != anchor:
+    fail()
+current = anchor
+inspect(current, "directory")
+for component in os.path.relpath(backup, anchor).split(os.sep):
+    if component in {"", ".", ".."}:
+        fail()
+    current = os.path.join(current, component)
+    inspect(current, "directory", 0o700 if current == backup else None)
+if kind == "lease":
+    if os.path.dirname(target) != backup or os.path.basename(target) != "active.json":
+        fail()
+    inspect(target, "file", 0o600)
+elif kind == "checkpoint":
+    if os.path.dirname(target) != backup:
+        fail()
+    inspect(target, "directory", 0o700)
+    if os.path.realpath(target) != target:
+        fail()
+    for name in ("manifest.json", "compose.yaml", "deploy.env"):
+        inspect(os.path.join(target, name), "file", 0o600)
+    terminal = os.path.join(target, "terminal.json")
+    if os.path.lexists(terminal):
+        inspect(terminal, "file", 0o600)
+else:
+    fail()
+PY
+}
+verify_prior_lease_locked() {
+  local observed_id observed_hash
+  if test "$MS_PRIOR_LEASE_ID" = absent; then
+    test ! -e "$MS_LEASE" && test ! -L "$MS_LEASE" || die lease-replaced
+    return
+  fi
+  secure_owner_path "$MS_LEASE" lease || die lease-path-invalid
+  observed_id="$(stat -c %d:%i "$MS_LEASE")" || die lease-replaced
+  observed_hash="$(sha256sum "$MS_LEASE" | cut -d' ' -f1)" || die lease-replaced
+  test "$observed_id" = "$MS_PRIOR_LEASE_ID" && test "$observed_hash" = "$MS_PRIOR_LEASE_HASH" || die lease-replaced
+}
+verify_prior_checkpoint_locked() {
+  local observed_id
+  test "$MS_PRIOR_CHECKPOINT_ID" != absent || return
+  secure_owner_path "$MS_BACKUP/$MS_PRIOR_RUN_ID" checkpoint || die prior-checkpoint-replaced
+  observed_id="$(stat -c %d:%i "$MS_BACKUP/$MS_PRIOR_RUN_ID")" || die prior-checkpoint-replaced
+  test "$observed_id" = "$MS_PRIOR_CHECKPOINT_ID" || die prior-checkpoint-replaced
+}
 lease_value() { strict_json_file "$MS_LEASE" || die lease-json-invalid; jq -er "$1" "$MS_LEASE"; }
-lease_write() { atomic_file "$MS_LEASE" 0600; }
+lease_write() { atomic_file "$MS_LEASE" 0600 "${1:-false}"; }
 cleanup_retention_locked() {
   local current="${1:-}" cutoff candidate modified run_id manifest terminal containers container image role tag source resolved revision
   local -a candidates=() server_tags=() sidecar_tags=()
@@ -93,6 +171,8 @@ cleanup_retention_locked() {
       if test "$role" = server; then server_tags[-1]="$tag"; else sidecar_tags[-1]="$tag"; fi
     done
   done
+  verify_prior_lease_locked
+  verify_prior_checkpoint_locked
   for index in "${!candidates[@]}"; do
     test -z "${server_tags[$index]}" || docker image rm "${server_tags[$index]}" >/dev/null 2>&1 || true
     test -z "${sidecar_tags[$index]}" || docker image rm "${sidecar_tags[$index]}" >/dev/null 2>&1 || true
@@ -132,11 +212,16 @@ remove_new_untagged_images() {
 }
 require_root() { test "$(id -u)" -eq 0 || die root-required; }
 require_paths() {
-  test "$MS_REPO" = /opt/discord-music || die wrong-repository
-  test "$MS_BACKUP" = /root/discord-music-rollbacks || die wrong-backup-root
-  test "$MS_LOCK" = /run/lock/discord-music-deploy.lock || die wrong-lock
-  test "$MS_LEASE" = /root/discord-music-rollbacks/active.json || die wrong-lease
-  test "$MS_COUNTER" = /root/discord-music-rollbacks/run-counter || die wrong-counter
+  if test -n "$MS_TEST_ROOT"; then
+    [[ "$MS_TEST_ROOT" = /* && "$MS_TEST_ROOT" != / && "$MS_EXPECT_UID" =~ ^[0-9]+$ ]] || die test-root-invalid
+  else
+    test "$MS_EXPECT_UID" = 0 || die test-uid-forbidden
+  fi
+  test "$MS_REPO" = "$MS_TEST_ROOT/opt/discord-music" || die wrong-repository
+  test "$MS_BACKUP" = "$MS_TEST_ROOT/root/discord-music-rollbacks" || die wrong-backup-root
+  test "$MS_LOCK" = "$MS_TEST_ROOT/run/lock/discord-music-deploy.lock" || die wrong-lock
+  test "$MS_LEASE" = "$MS_BACKUP/active.json" || die wrong-lease
+  test "$MS_COUNTER" = "$MS_BACKUP/run-counter" || die wrong-counter
 }
 active_config() {
   local container config
@@ -246,11 +331,22 @@ begin_run() {
   test -e "$MS_LOCK" || install -m 0600 /dev/null "$MS_LOCK"
   test "$(stat -c %U:%G:%a "$MS_LOCK")" = root:root:600 || die lock-mode
   exec 9>"$MS_LOCK"; flock -x 9
-  local prior_state="" prior_restore="" prior_id="" prior_manifest="" prior_lease=""
+  local prior_state="" prior_restore="" prior_id="" prior_manifest="" prior_lease="" lease_path_id lease_fd_id checkpoint_path_id checkpoint_fd_id
+  MS_PRIOR_LEASE_ID=absent
+  MS_PRIOR_LEASE_HASH=absent
+  MS_PRIOR_CHECKPOINT_ID=absent
+  MS_PRIOR_RUN_ID=""
   if test -r "$MS_LEASE"; then
     local prior_projection
-    prior_lease="$(command cat "$MS_LEASE" && printf x)" || die lease-read-invalid
+    secure_owner_path "$MS_LEASE" lease || die lease-path-invalid
+    exec 8<"$MS_LEASE"
+    lease_path_id="$(stat -c %d:%i "$MS_LEASE")" || die lease-read-invalid
+    lease_fd_id="$(stat -Lc %d:%i "/proc/$$/fd/8")" || die lease-read-invalid
+    test "$lease_path_id" = "$lease_fd_id" || die lease-replaced
+    MS_PRIOR_LEASE_ID="$lease_fd_id"
+    prior_lease="$(command cat <&8 && printf x)" || die lease-read-invalid
     prior_lease="${prior_lease%x}"
+    MS_PRIOR_LEASE_HASH="$(printf '%s' "$prior_lease" | sha256sum | cut -d' ' -f1)"
     strict_json_file <(printf '%s' "$prior_lease") || die lease-json-invalid
     prior_projection="$(jq -er --arg schema "$MS_SCHEMA" '
       if type == "object"
@@ -273,7 +369,13 @@ begin_run() {
       *) die prior-lease-state;;
     esac
     prior_manifest="$MS_BACKUP/$prior_id/manifest.json"
-    test -f "$prior_manifest" && test ! -L "$prior_manifest" || die prior-checkpoint-missing
+    secure_owner_path "$MS_BACKUP/$prior_id" checkpoint || die prior-checkpoint-invalid
+    exec 7<"$MS_BACKUP/$prior_id"
+    checkpoint_path_id="$(stat -c %d:%i "$MS_BACKUP/$prior_id")" || die prior-checkpoint-invalid
+    checkpoint_fd_id="$(stat -Lc %d:%i "/proc/$$/fd/7")" || die prior-checkpoint-invalid
+    test "$checkpoint_path_id" = "$checkpoint_fd_id" || die prior-checkpoint-replaced
+    MS_PRIOR_CHECKPOINT_ID="$checkpoint_fd_id"
+    MS_PRIOR_RUN_ID="$prior_id"
     validate_cleanup_archive "$prior_manifest" <(printf '%s' "$prior_lease") "$prior_id" || die prior-checkpoint-invalid
     for file in "$MS_BACKUP/$prior_id/compose.yaml" "$MS_BACKUP/$prior_id/deploy.env"; do
       test -f "$file" && test ! -L "$file" || die prior-checkpoint-invalid
@@ -284,6 +386,8 @@ begin_run() {
   cleanup_retention_locked "$prior_id"
   cleanup_stale_lease_temps_locked true
   if test -n "$prior_id"; then
+    verify_prior_lease_locked
+    verify_prior_checkpoint_locked
     printf '%s' "$prior_lease" >"$MS_BACKUP/$prior_id/terminal.json.tmp"
     sync -f "$MS_BACKUP/$prior_id/terminal.json.tmp"
     mv -f "$MS_BACKUP/$prior_id/terminal.json.tmp" "$MS_BACKUP/$prior_id/terminal.json"
@@ -311,7 +415,7 @@ begin_run() {
   now="$(boottime)"; deadline=$((now+MS_DEADLINE_SECONDS))
   jq -cn --arg schema "$MS_SCHEMA" --arg runId "$run_id" --argjson generation "$generation" --arg selectedSha "$MS_SHA" \
     --argjson sequence 0 --argjson deadline "$deadline" --arg eventCursor "$cursor" \
-    '{schema:$schema,runId:$runId,generation:$generation,selectedSha:$selectedSha,sequence:$sequence,deadlineClock:"CLOCK_BOOTTIME",deadlineBoottime:$deadline,eventCursor:$eventCursor,state:"active",restoreState:"idle",stableSamples:0,lateDaemonDetected:false,reconcilePasses:0,eventProof:null,acceptedOperations:[],activeMutation:null}' | lease_write
+    '{schema:$schema,runId:$runId,generation:$generation,selectedSha:$selectedSha,sequence:$sequence,deadlineClock:"CLOCK_BOOTTIME",deadlineBoottime:$deadline,eventCursor:$eventCursor,state:"active",restoreState:"idle",stableSamples:0,lateDaemonDetected:false,reconcilePasses:0,eventProof:null,acceptedOperations:[],activeMutation:null}' | lease_write true
   nohup setsid "$run/owner.sh" watchdog "$run_id" >/dev/null 2>&1 </dev/null 9>&- &
   jq -cn --arg runId "$run_id" --argjson generation "$generation" '{ok:true,runId:$runId,generation:$generation,sequence:0,checkpointDurable:true,watchdogLaunched:true}'
 }
@@ -638,7 +742,7 @@ task_event_floor() {
   done | sort | head -1
 }
 validate_cleanup_archive() {
-  python3 - "$1" "$2" "$3" "$MS_SCHEMA" 2>/dev/null <<'PY'
+  python3 - "$1" "$2" "$3" "$MS_SCHEMA" "$MS_TEST_ROOT/opt/discord-music/deploy/compose.yaml" "$MS_TEST_ROOT/opt/discord-music/deploy" 2>/dev/null <<'PY'
 import json
 import re
 import sys
@@ -685,7 +789,7 @@ def timestamp(value):
         fail()
     return value
 
-manifest_path, terminal_path, run_id, schema = sys.argv[1:]
+manifest_path, terminal_path, run_id, schema, config_path, working_dir = sys.argv[1:]
 manifest = load(manifest_path)
 manifest_keys = {"schema", "runId", "generation", "selectedSha", "kind", "configPath", "workingDir", "eventCursor", "composeHash", "envHash", "ownerHash", "desiredFingerprint", "priorState", "priorPublicHealth", "rollbackTags"}
 exact(manifest, manifest_keys)
@@ -696,7 +800,7 @@ if generation != int(run_id.split("-", 1)[0]):
     fail()
 selected_sha = string(manifest["selectedSha"], HEX40)
 string(manifest["kind"])
-if manifest["configPath"] != "/opt/discord-music/deploy/compose.yaml" or manifest["workingDir"] != "/opt/discord-music/deploy":
+if manifest["configPath"] != config_path or manifest["workingDir"] != working_dir:
     fail()
 event_cursor = timestamp(manifest["eventCursor"])
 for field in ("composeHash", "envHash", "ownerHash", "desiredFingerprint"):
