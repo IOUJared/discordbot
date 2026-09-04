@@ -371,17 +371,20 @@ validate_begin_recovery_paths_locked() {
   done
 }
 recover_begin_runs_locked() {
-  python3 - "$MS_BACKUP" "$MS_COUNTER" "${1:-}" "$MS_EXPECT_UID" "$MS_RECOVERY_FINAL_BINDINGS" 2>/dev/null <<'PY'
+  python3 - "$MS_BACKUP" "$MS_COUNTER" "${1:-}" "$MS_EXPECT_UID" "$MS_RECOVERY_FINAL_BINDINGS" "$MS_TEST_ROOT" "$MS_OWNER_PID" 2>/dev/null <<'PY'
 import json
 import os
 import re
-import shutil
+import secrets
+import signal
 import stat
 import sys
 
-backup, counter, current, uid_value, bindings_value = sys.argv[1:]
+backup, counter, current, uid_value, bindings_value, test_root, owner_pid = sys.argv[1:]
 uid = int(uid_value)
 bindings = dict(line.split("=", 1) for line in bindings_value.splitlines())
+kill_phase = os.environ.get("MEDIA_OWNER_TEST_KILL_PHASE", "") if test_root else ""
+fail_phase = os.environ.get("MEDIA_OWNER_TEST_FAIL_RECOVERY_PHASE", "") if test_root else ""
 counter_value = 0
 if os.path.lexists(counter):
     value = os.lstat(counter)
@@ -392,6 +395,17 @@ if os.path.lexists(counter):
     counter_value = int(raw[:-1])
 run_pattern = re.compile(r"^([1-9][0-9]*)-([0-9a-f]{32})$")
 temp_pattern = re.compile(r"^\.([1-9][0-9]*-[0-9a-f]{32})\.tmp$")
+quarantine_pattern = re.compile(r"^\.begin-quarantine\.([1-9][0-9]*-[0-9a-f]{32})\.([0-9a-f]{32})$")
+
+def crash(name):
+    if kill_phase != name: return
+    os.kill(int(owner_pid), signal.SIGKILL)
+    os.kill(os.getpid(), signal.SIGKILL)
+
+def sync_backup():
+    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
 
 def unique(pairs):
     value = {}
@@ -418,7 +432,9 @@ def marker_for(path):
         raise ValueError("invalid pending generation")
     return marker
 
-actions = []
+file_actions = []
+quarantine_actions = []
+quarantines = []
 max_generation = counter_value
 for name in sorted(os.listdir(backup)):
     lease_stage = re.fullmatch(r"active\.json\.begin\.([1-9][0-9]*-[0-9a-f]{32})\.tmp", name)
@@ -428,9 +444,20 @@ for name in sorted(os.listdir(backup)):
         if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o600:
             raise ValueError("unsafe pending lease")
         max_generation = max(max_generation, generation)
-        actions.append(("unlink", os.path.join(backup, name)))
+        file_actions.append(("unlink", os.path.join(backup, name)))
         continue
     path = os.path.join(backup, name)
+    quarantine = quarantine_pattern.fullmatch(name)
+    if name.startswith(".begin-quarantine.") and not quarantine:
+        raise ValueError("invalid quarantine name")
+    if quarantine:
+        value = os.lstat(path)
+        if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode) or value.st_uid != uid or stat.S_IMODE(value.st_mode) != 0o700:
+            raise ValueError("unsafe quarantine")
+        generation = int(quarantine.group(1).split("-", 1)[0])
+        max_generation = max(max_generation, generation)
+        quarantines.append(path)
+        continue
     match = temp_pattern.fullmatch(name)
     run_id = match.group(1) if match else name
     if not match and not run_pattern.fullmatch(name): continue
@@ -440,35 +467,60 @@ for name in sorted(os.listdir(backup)):
     generation = int(run_id.split("-", 1)[0]); max_generation = max(max_generation, generation)
     marker_path = os.path.join(path, ".begin-pending")
     if not os.path.lexists(marker_path):
-        if match: actions.append(("remove", path))
+        if match: quarantine_actions.append((path, run_id))
         elif bindings.get(run_id) != f"{value.st_dev}:{value.st_ino}": raise ValueError("canonical archive replaced")
         continue
     marker = marker_for(path)
     if marker["runId"] != run_id or marker["generation"] != generation:
         raise ValueError("unbound pending checkpoint")
     if run_id == current and not match:
-        actions.append(("unlink-marker", marker_path))
+        file_actions.append(("unlink-marker", marker_path))
     else:
-        actions.append(("remove", path))
+        quarantine_actions.append((path, run_id))
+rename_plan = []
+for path, run_id in quarantine_actions:
+    while True:
+        target = os.path.join(backup, f".begin-quarantine.{run_id}.{secrets.token_hex(16)}")
+        if not os.path.lexists(target): break
+    rename_plan.append((path, target))
+if fail_phase == "quarantine-rename" and rename_plan:
+    raise OSError("injected quarantine rename failure")
+renamed = []
+try:
+    for index, (source, target) in enumerate(rename_plan):
+        if fail_phase == "quarantine-second-rename" and index == 1:
+            raise OSError("injected second quarantine rename failure")
+        os.rename(source, target)
+        renamed.append((source, target))
+    if renamed: sync_backup()
+except OSError:
+    for source, target in reversed(renamed):
+        if os.path.lexists(target) and not os.path.lexists(source): os.rename(target, source)
+    if renamed: sync_backup()
+    raise
+quarantines.extend(target for _, target in renamed)
+crash("recovery-quarantine-rename")
 if max_generation > counter_value:
     staged = f"{counter}.recover.{os.getpid()}"
     with open(staged, "w", encoding="ascii") as target:
         target.write(f"{max_generation}\n"); target.flush(); os.fsync(target.fileno())
     os.chmod(staged, 0o600); os.replace(staged, counter)
-    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
-    try: os.fsync(directory)
-    finally: os.close(directory)
-for action, path in actions:
-    if action == "remove": shutil.rmtree(path)
-    else: os.unlink(path)
+    sync_backup()
+crash("recovery-counter-fsync")
+for action, path in file_actions:
+    os.unlink(path)
     if action == "unlink-marker":
         directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
         try: os.fsync(directory)
         finally: os.close(directory)
-if actions:
-    directory = os.open(backup, os.O_RDONLY | os.O_DIRECTORY)
-    try: os.fsync(directory)
-    finally: os.close(directory)
+removed = False
+for path in quarantines:
+    try:
+        os.rmdir(path)
+        removed = True
+    except OSError:
+        pass
+if file_actions or removed: sync_backup()
 PY
 }
 recover_interrupted_active_locked() {

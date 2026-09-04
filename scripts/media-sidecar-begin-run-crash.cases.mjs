@@ -5,7 +5,12 @@ import test from "node:test"
 import { withRetentionFixture } from "./media-sidecar-retention-test-support.mjs"
 
 const pendingNames = (backup) =>
-  readdirSync(backup).filter((name) => name.includes(".tmp") || name.startsWith("."))
+  readdirSync(backup).filter(
+    (name) =>
+      (name.includes(".tmp") || name.startsWith(".")) && !name.startsWith(".begin-quarantine."),
+  )
+const quarantineNames = (backup) =>
+  readdirSync(backup).filter((name) => name.startsWith(".begin-quarantine."))
 
 for (const phase of [
   "before-counter-fsync",
@@ -43,6 +48,10 @@ for (const phase of [
         false,
       )
       assert.deepEqual(pendingNames(fixture.backup), [])
+      assert.equal(
+        quarantineNames(fixture.backup).length,
+        phase === "before-counter-fsync" || phase === "after-counter-fsync" ? 0 : 1,
+      )
       assert.equal(readFileSync(terminal, "utf8"), priorLease)
       assert.equal(fixture.read(fixture.dockerMutations), dockerBefore)
       assert.equal(fixture.read(fixture.volumeMarker), volumeBefore)
@@ -80,6 +89,7 @@ test("SIGKILL after active lease rename leaves one complete active checkpoint", 
       JSON.stringify(fixture.initialCurrent.terminal),
     )
     assert.deepEqual(pendingNames(fixture.backup), [])
+    assert.equal(quarantineNames(fixture.backup).length, 1)
     assert.equal(fixture.read(fixture.dockerMutations), dockerBefore)
     assert.equal(fixture.read(fixture.volumeMarker), volumeBefore)
   })
