@@ -585,68 +585,163 @@ task_event_floor() {
     jq -er --arg schema "$MS_SCHEMA" --arg runId "$run_id" 'select(.schema==$schema and .runId==$runId)|.eventCursor' "$manifest" || continue
   done | sort | head -1
 }
+validate_cleanup_archive() {
+  python3 - "$1" "$2" "$3" "$MS_SCHEMA" 2>/dev/null <<'PY'
+import json
+import re
+import sys
+from datetime import datetime
+
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
+HEX40 = re.compile(r"[0-9a-f]{40}\Z")
+HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+OPERATIONS = {"tag-prior", "receive-bundle", "checkout", "build", "build-server", "build-sidecar", "configure-shadow", "configure-rust", "configure-disabled", "up", "stop-sidecar", "start-sidecar", "benchmark-live", "benchmark-fallback", "benchmark-disabled", "benchmark-fresh", "drill-accept"}
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate member")
+        result[key] = value
+    return result
+
+def load(path):
+    with open(path, encoding="utf-8") as source:
+        return json.load(source, object_pairs_hook=unique_object, parse_constant=lambda _value: fail())
+
+def fail():
+    raise ValueError("invalid archive")
+
+def exact(value, required, optional=()):
+    if type(value) is not dict or not set(required) <= set(value) or set(value) - set(required) - set(optional):
+        fail()
+
+def integer(value, minimum=0):
+    if type(value) is not int or not minimum <= value <= MAX_SAFE_INTEGER:
+        fail()
+    return value
+
+def string(value, pattern=None):
+    if type(value) is not str or not value or (pattern is not None and pattern.fullmatch(value) is None):
+        fail()
+    return value
+
+def timestamp(value):
+    parsed = datetime.fromisoformat(string(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        fail()
+    return value
+
+manifest_path, terminal_path, run_id, schema = sys.argv[1:]
+manifest = load(manifest_path)
+manifest_keys = {"schema", "runId", "generation", "selectedSha", "kind", "configPath", "workingDir", "eventCursor", "composeHash", "envHash", "ownerHash", "desiredFingerprint", "priorState", "priorPublicHealth", "rollbackTags"}
+exact(manifest, manifest_keys)
+if manifest["schema"] != schema or manifest["runId"] != run_id:
+    fail()
+generation = integer(manifest["generation"], 1)
+if generation != int(run_id.split("-", 1)[0]):
+    fail()
+selected_sha = string(manifest["selectedSha"], HEX40)
+string(manifest["kind"])
+if manifest["configPath"] != "/opt/discord-music/deploy/compose.yaml" or manifest["workingDir"] != "/opt/discord-music/deploy":
+    fail()
+event_cursor = timestamp(manifest["eventCursor"])
+for field in ("composeHash", "envHash", "ownerHash", "desiredFingerprint"):
+    string(manifest[field], HEX64)
+
+prior = manifest["priorState"]
+prior_keys = {"configHash", "envHash", "git", "mode", "serverImage", "sidecarImage", "serverRef", "sidecarRef", "sidecarPresent", "publicHealth", "volumes"}
+exact(prior, prior_keys)
+string(prior["configHash"], HEX64); string(prior["envHash"], HEX64); string(prior["git"], HEX40)
+if prior["mode"] not in {"disabled", "shadow", "rust"} or type(prior["sidecarPresent"]) is not bool:
+    fail()
+string(prior["serverImage"], IMAGE); string(prior["serverRef"])
+if type(prior["sidecarImage"]) is not str or type(prior["sidecarRef"]) is not str:
+    fail()
+if prior["sidecarPresent"]:
+    string(prior["sidecarImage"], IMAGE); string(prior["sidecarRef"])
+elif prior["sidecarImage"] or prior["sidecarRef"]:
+    fail()
+exact(prior["publicHealth"], {"status", "discord", "voice", "uptimeType"})
+for field in ("status", "discord", "voice"):
+    string(prior["publicHealth"][field])
+if prior["publicHealth"]["uptimeType"] != "number":
+    fail()
+if type(prior["volumes"]) is not list:
+    fail()
+for volume in prior["volumes"]:
+    exact(volume, {"name", "destination"}); string(volume["name"]); string(volume["destination"])
+exact(manifest["priorPublicHealth"], {"status", "discord", "voice", "uptime"})
+for field in ("status", "discord", "voice"):
+    string(manifest["priorPublicHealth"][field])
+integer(manifest["priorPublicHealth"]["uptime"])
+exact(manifest["rollbackTags"], {"server", "sidecar"})
+if manifest["rollbackTags"]["server"] != f"discord-music-rollback:{run_id}-server":
+    fail()
+expected_sidecar = f"discord-music-rollback:{run_id}-sidecar" if prior["sidecarPresent"] else None
+if manifest["rollbackTags"]["sidecar"] != expected_sidecar:
+    fail()
+
+if not terminal_path:
+    sys.exit(0)
+terminal = load(terminal_path)
+terminal_keys = {"schema", "runId", "generation", "selectedSha", "sequence", "deadlineClock", "deadlineBoottime", "eventCursor", "state", "restoreState", "stableSamples", "lateDaemonDetected", "reconcilePasses", "eventProof", "acceptedOperations", "activeMutation"}
+exact(terminal, terminal_keys, {"cleanup"})
+if terminal["schema"] != schema or terminal["runId"] != run_id or terminal["generation"] != generation or terminal["selectedSha"] != selected_sha or terminal["eventCursor"] != event_cursor:
+    fail()
+sequence = integer(terminal["sequence"])
+integer(terminal["deadlineBoottime"]); integer(terminal["stableSamples"]); integer(terminal["reconcilePasses"])
+if terminal["deadlineClock"] != "CLOCK_BOOTTIME" or type(terminal["lateDaemonDetected"]) is not bool or terminal["activeMutation"] is not None:
+    fail()
+state_pair = (terminal["state"], terminal["restoreState"])
+if state_pair not in {("committed", "idle"), ("expired", "restored")}:
+    fail()
+proof = terminal["eventProof"]
+if proof is None:
+    if state_pair != ("committed", "idle") or terminal["stableSamples"] != 0:
+        fail()
+else:
+    if terminal["stableSamples"] != 2:
+        fail()
+    exact(proof, {"cursor", "observedCount", "quietWindowEvents", "stableAtBoottime"})
+    if proof["cursor"] != event_cursor:
+        fail()
+    integer(proof["observedCount"]); integer(proof["stableAtBoottime"])
+    if integer(proof["quietWindowEvents"]) != 0:
+        fail()
+if type(terminal["acceptedOperations"]) is not list:
+    fail()
+previous = 0
+for operation in terminal["acceptedOperations"]:
+    exact(operation, {"sequence", "operation", "status"})
+    observed = integer(operation["sequence"], 1)
+    if observed <= previous or observed > sequence or operation["operation"] not in OPERATIONS or operation["status"] not in {"succeeded", "failed", "superseded"}:
+        fail()
+    previous = observed
+if "cleanup" in terminal:
+    cleanup = terminal["cleanup"]
+    if cleanup is not None:
+        cleanup_keys = {"failedBuildImagesRemoved", "freeMiBBefore", "freeMiBAfter", "volumesRemoved"}
+        cleanup_optional = {"failedBuildContainersRemoved", "supersededSelectedTagsRemoved", "temporaryQaTagsRemoved"}
+        exact(cleanup, cleanup_keys, cleanup_optional)
+        for field in cleanup:
+            integer(cleanup[field])
+        if cleanup["volumesRemoved"] != 0:
+            fail()
+PY
+}
 validate_cleanup_json_records() {
-  local current_run_id="$1" candidate run_id manifest terminal selected_sha generation event_cursor
+  local current_run_id="$1" candidate run_id manifest terminal terminal_arg
   for candidate in "$MS_BACKUP"/*; do
     test -d "$candidate" || continue; run_id="${candidate##*/}"
     [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
     test "$run_id" != "$current_run_id" || continue
-    manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"
-    test ! -r "$manifest" || strict_json_file "$manifest" || return 1
-    test ! -r "$terminal" || strict_json_file "$terminal" || return 1
-    test ! -r "$manifest" || jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" '
-      type=="object" and .schema==$schema and .runId==$runId and
-      (.generation|type=="number" and .>0 and floor==.) and
-      (.selectedSha|type=="string" and test("^[0-9a-f]{40}$")) and
-      (.kind|type=="string" and length>0) and
-      (.configPath|type=="string" and startswith("/")) and
-      (.workingDir|type=="string" and startswith("/")) and
-      (.eventCursor|type=="string" and length>0) and
-      ([.composeHash,.envHash,.ownerHash,.desiredFingerprint]|all(type=="string" and test("^[0-9a-f]{64}$"))) and
-      (.priorState|type=="object") and
-      (.priorState.configHash|type=="string" and test("^[0-9a-f]{64}$")) and
-      (.priorState.envHash|type=="string" and test("^[0-9a-f]{64}$")) and
-      (.priorState.git|type=="string" and test("^[0-9a-f]{40}$")) and
-      (.priorState.mode|type=="string" and IN("disabled","shadow","rust")) and
-      (.priorState.serverImage|type=="string" and test("^sha256:[0-9a-f]{64}$")) and
-      (.priorState.sidecarPresent|type=="boolean") and
-      (.priorState.sidecarImage|type=="string") and
-      (if .priorState.sidecarPresent then (.priorState.sidecarImage|test("^sha256:[0-9a-f]{64}$")) else .priorState.sidecarImage=="" end) and
-      (.priorState.serverRef|type=="string" and length>0) and
-      (.priorState.sidecarRef|type=="string") and
-      (.priorState.publicHealth|type=="object") and (.priorState.volumes|type=="array") and
-      (.priorPublicHealth|type=="object") and (.rollbackTags|type=="object") and
-      .rollbackTags.server==("discord-music-rollback:"+$runId+"-server") and
-      (if .priorState.sidecarPresent then .rollbackTags.sidecar==("discord-music-rollback:"+$runId+"-sidecar") else .rollbackTags.sidecar==null end)
-    ' "$manifest" >/dev/null || return 1
+    manifest="$candidate/manifest.json"; terminal="$candidate/terminal.json"; terminal_arg=""
     test ! -r "$terminal" || test -r "$manifest" || return 1
-    test ! -r "$terminal" || {
-      selected_sha="$(jq -er .selectedSha "$manifest")" || return 1
-      generation="$(jq -er .generation "$manifest")" || return 1
-      event_cursor="$(jq -er .eventCursor "$manifest")" || return 1
-      jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" --arg cursor "$event_cursor" --argjson generation "$generation" '
-        .sequence as $terminalSequence |
-        type=="object" and .schema==$schema and .runId==$runId and .selectedSha==$sha and
-        .generation==$generation and .eventCursor==$cursor and
-        (.sequence|type=="number" and .>=0 and floor==.) and
-        .deadlineClock=="CLOCK_BOOTTIME" and (.deadlineBoottime|type=="number" and .>=0 and floor==.) and
-        ((.state=="committed" and .restoreState=="idle") or (.state=="expired" and .restoreState=="restored")) and
-        (.stableSamples|type=="number" and .>=0 and floor==.) and
-        (.lateDaemonDetected|type=="boolean") and (.reconcilePasses|type=="number" and .>=0 and floor==.) and
-        (.eventProof==null or (.eventProof|type=="object")) and .activeMutation==null and
-        (.acceptedOperations|type=="array") and
-        (([.acceptedOperations[].sequence]|length)==([.acceptedOperations[].sequence]|unique|length)) and
-        (([.acceptedOperations[].sequence])==([.acceptedOperations[].sequence]|sort)) and
-        (.acceptedOperations|all(
-          type=="object" and
-          (.sequence|type=="number" and .>0 and floor==.) and .sequence<=$terminalSequence and
-          (.operation|type=="string" and IN("tag-prior","receive-bundle","checkout","build","build-server","build-sidecar","configure-shadow","configure-rust","configure-disabled","up","stop-sidecar","start-sidecar","benchmark-live","benchmark-fallback","benchmark-disabled","benchmark-fresh","drill-accept")) and
-          (.status|type=="string" and IN("succeeded","failed","superseded"))
-        ))
-      ' "$terminal" >/dev/null
-    } || return 1
-    event_cursor="$(jq -er .eventCursor "$manifest")" || return 1
-    date -d "$event_cursor" +%s >/dev/null 2>&1 || return 1
+    test -r "$manifest" || continue
+    test ! -r "$terminal" || terminal_arg="$terminal"
+    validate_cleanup_archive "$manifest" "$terminal_arg" "$run_id" || return 1
   done
 }
 cleanup_failed_images() {
