@@ -497,7 +497,6 @@ cleanup_failed_images() {
   while read -r id; do
     test -n "$id" || continue
     mounts="$(docker inspect -f '{{len .Mounts}}' "$id")"; test "$mounts" -eq 0 || continue
-    labels="$(docker inspect -f '{{json .Config.Labels}}' "$id")"; test "$labels" = null || test "$labels" = '{}' || continue
     tags="$(docker inspect -f '{{.Config.Image}}' "$id")"
     docker image inspect -f '{{json .RepoTags}}' "$tags" | grep -Eq '^(null|\[\])$' || continue
     created="$(docker inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -ge "$floor_epoch" || continue
