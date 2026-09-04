@@ -32,7 +32,9 @@ ARG BUILD_TREE=0000000000000000000000000000000000000000
 LABEL org.opencontainers.image.revision=$BUILD_SHA \
       io.discord-music.source-tree=$BUILD_TREE \
       io.discord-music.yt-dlp.version=2026.08.19 \
+      io.discord-music.yt-dlp.sha256=58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a \
       io.discord-music.deno.version=2.9.5 \
+      io.discord-music.deno.asset-sha256=8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530 \
       io.discord-music.extractor.proxy=direct-empty \
       io.discord-music.extractor.js-runtime=deno:/usr/local/bin/deno
 RUN apt-get update \

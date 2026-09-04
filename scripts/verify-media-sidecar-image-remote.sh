@@ -1,5 +1,43 @@
 set -Eeuo pipefail
 umask 077
+if test "$VERIFY_MODE" = inspect; then
+  stage=production-container
+  failure() { printf 'failure_stage=%s\n' "$stage"; }
+  trap failure ERR
+  cd "$PRODUCTION_REPO"
+  sidecar="$(docker compose ps -q media-sidecar)"
+  test -n "$sidecar"
+  test "$(docker inspect -f '{{.State.Running}}' "$sidecar")" = true
+  test "$(docker inspect -f '{{.State.Health.Status}}' "$sidecar")" = healthy
+  test -z "$(docker port "$sidecar")"
+  stage=production-pins
+  image="$(docker inspect -f '{{.Image}}' "$sidecar")"
+  test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$CHECKPOINT_SHA"
+  test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.yt-dlp.sha256"}}' "$image")" = 58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a
+  test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.deno.asset-sha256"}}' "$image")" = 8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530
+  test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.extractor.proxy"}}' "$image")" = direct-empty
+  test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.extractor.js-runtime"}}' "$image")" = deno:/usr/local/bin/deno
+  test "$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image" | cut -d= -f1 | sort | paste -sd, -)" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR
+  stage=production-processes
+  docker exec "$sidecar" sh -ceu '
+test "$(cat /proc/1/comm)" = tini
+tr "\0" " " </proc/1/cmdline | grep -Eq "^/usr/bin/tini -s -- /usr/local/bin/discord-music-media-sidecar"
+child="$(for p in /proc/[0-9]*; do test -r "$p/stat" || continue; set -- $(cat "$p/stat"); test "$4" = 1 && test "$2" = "(discord-music-m)" && echo "${p##*/}" && break; done)"; test -n "$child"
+test "$(awk "/^Uid:/ {print \$2}" "/proc/$child/status")" = 10001
+test "$(/usr/bin/tini --version 2>&1)" = "tini version 0.19.0"
+/usr/local/bin/discord-music-media-sidecar --version | grep -F "build '"${CHECKPOINT_SHA:0:12}"'" >/dev/null
+test "$(/usr/local/bin/yt-dlp --version)" = 2026.08.19
+/usr/local/bin/deno --version | grep -F "deno 2.9.5" >/dev/null
+! command -v node; ! command -v bun; ! command -v qjs; ! command -v ffmpeg'
+  for attempt in $(seq 1 20); do
+    process_state="$(docker top "$sidecar" -eo stat,comm | awk 'NR > 1 { count++; if ($1 ~ /^Z/) zombie=1 } END { printf "%s:%s", count, zombie + 0 }')"
+    test "$process_state" = 2:0 && break
+    sleep 0.1
+  done
+  test "$process_state" = 2:0
+  printf 'checkpoint=%s\nproduction_private=true\nproduction_pins=true\nproduction_tini_subreaper=true\nproduction_descendants_clean=true\n' "$CHECKPOINT_SHA"
+  exit 0
+fi
 work="$REMOTE_ROOT/$CHECKPOINT_SHA"; source="$work/source"; raw="$work/raw.log"
 cleanup() { cd /; CHECKPOINT_SHA="$CHECKPOINT_SHA" CHECKPOINT_TREE="$CHECKPOINT_TREE" docker compose -p "$PROJECT" -f "$source/$COMPOSE" down --remove-orphans --volumes >"$raw" 2>&1 || true; rm -rf -- "$work"; printf 'cleanup=true\n'; }
 failure() { printf 'failure_stage=%s\n' "$stage"; }
@@ -16,6 +54,10 @@ test "$(docker compose -p "$PROJECT" -f "$COMPOSE" config --services | paste -sd
 test "$(docker compose -p "$PROJECT" -f "$COMPOSE" config --images | sort | paste -sd, -)" = "discord-music-media-sidecar:qa-$CHECKPOINT_SHA,discord-music-node:qa-$CHECKPOINT_SHA"
 docker compose -p "$PROJECT" -f "$COMPOSE" config >"$raw" 2>&1
 ! grep -Eq '^[[:space:]]+(ports|volumes|env_file|secrets|configs):|external:[[:space:]]*true' "$raw"
+stage=context-clean
+mkdir "$work/context"
+printf 'FROM scratch\nCOPY . /\n' | docker build --quiet --output "type=local,dest=$work/context" -f - . >"$raw" 2>&1
+! find "$work/context" -mindepth 1 \( -type d \( -name .git -o -name .omo -o -name secrets -o -name target \) -o -type f -iname '*cookies*' \) -print -quit | grep -q .
 stage=image-build; docker compose -p "$PROJECT" -f "$COMPOSE" build >"$raw" 2>&1
 stage=compose-start; docker compose -p "$PROJECT" -f "$COMPOSE" up -d >"$raw" 2>&1
 sidecar="$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q media-sidecar)"; probe="$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q probe)"
@@ -24,6 +66,12 @@ for attempt in $(seq 1 30); do test "$(docker inspect -f '{{if .State.Health}}{{
 test "$(docker inspect -f '{{.State.Health.Status}}' "$sidecar")" = healthy; stage=image-labels
 test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = "$CHECKPOINT_SHA"
 test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.source-tree"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = "$CHECKPOINT_TREE"
+test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.yt-dlp.sha256"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = 58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a
+test "$(docker image inspect -f '{{index .Config.Labels "io.discord-music.deno.asset-sha256"}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA")" = 8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530
+stage=history-clean
+docker image history --no-trunc "discord-music-media-sidecar:qa-$CHECKPOINT_SHA" >"$raw"
+! grep -Eqi '(authorization:|bearer[[:space:]]|begin [a-z ]*private key|authorized_keys|(^|[/ ])cookies?([^a-z]|$)|(^|[/ ])\.env([^a-z]|$))' "$raw"
+test "$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "discord-music-media-sidecar:qa-$CHECKPOINT_SHA" | cut -d= -f1 | sort | paste -sd, -)" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR
 test -z "$(docker port "$sidecar")"; stage=private-health
 docker exec "$probe" node -e "fetch('http://media-sidecar:3101/healthz').then(async r=>{if(r.status!==200||JSON.stringify(await r.json())!=='{\"version\":1,\"status\":\"ok\"}')process.exit(1)})" >"$raw" 2>&1
 stage=sidecar-runtime
@@ -43,7 +91,7 @@ docker exec "$probe" sh -ceu 'ffmpeg -version >/dev/null; yt-dlp --version >/dev
 if test "$VERIFY_MODE" = smoke; then
   stage=challenge-smoke
   docker exec -d "$probe" node -e "const fs=require('node:fs'),net=require('node:net');fs.writeFileSync('/tmp/proxy-count','0');let n=0;net.createServer(s=>{n++;fs.writeFileSync('/tmp/proxy-count',String(n));s.destroy()}).listen(43123,'0.0.0.0');setInterval(()=>{},2147483647)"
-  docker exec "$sidecar" sh -ceu 'umask 077; raw=/tmp/challenge.raw; trap "rm -f -- $raw" EXIT; HTTP_PROXY=http://probe:43123 HTTPS_PROXY=http://probe:43123 ALL_PROXY=http://probe:43123 NO_PROXY= http_proxy=http://probe:43123 https_proxy=http://probe:43123 all_proxy=http://probe:43123 no_proxy= /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1'
+  docker exec "$sidecar" sh -ceu 'umask 077; raw=/tmp/challenge.raw; trap "rm -f -- $raw" EXIT; HTTP_PROXY=http://probe:43123 HTTPS_PROXY=http://probe:43123 ALL_PROXY=http://probe:43123 NO_PROXY= http_proxy=http://probe:43123 https_proxy=http://probe:43123 all_proxy=http://probe:43123 no_proxy= /usr/bin/timeout 30 /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1'
   test "$(docker exec "$probe" cat /tmp/proxy-count | tr -d '\r')" = 0
 fi
 if test "$VERIFY_MODE" = drain; then
@@ -58,10 +106,14 @@ if test "$VERIFY_MODE" = drain; then
     sleep 0.1
   done
   $observed; $deno_observed
+  docker top "$sidecar" -eo pid,stat,comm | awk 'NR > 1 { if ($2 ~ /^Z/) exit 1; print $1 }' >"$work/host-pids"
+  while read -r pid; do test -r "/proc/$pid/stat"; printf '%s:%s\n' "$pid" "$(awk '{print $22}' "/proc/$pid/stat")"; done <"$work/host-pids" >"$work/host-processes"
   started="$(date +%s%3N)"; docker kill --signal=TERM "$sidecar" >"$raw" 2>&1
   while test "$(docker inspect -f '{{.State.Running}}' "$sidecar")" = true; do test $(( $(date +%s%3N) - started )) -lt 10000; sleep 0.1; done
   test $(( $(date +%s%3N) - started )) -lt 10000
-  while read -r pid; do test ! -e "/proc/$pid"; done <"$work/children"
+  while IFS=: read -r pid start; do test ! -r "/proc/$pid/stat" || test "$(awk '{print $22}' "/proc/$pid/stat")" != "$start"; done <"$work/host-processes"
 fi
-printf 'checkpoint=%s\ntree=%s\nprivate_health=true\nruntime_pins=true\nnode_fallback_tools=true\nproxy_sentinel_connections=0\nchallenge_smoke=%s\nsaturated_drain=%s\n' "$CHECKPOINT_SHA" "$CHECKPOINT_TREE" "$VERIFY_MODE" "$VERIFY_MODE"
+test "$VERIFY_MODE" = smoke && challenge=true || challenge=not-run
+test "$VERIFY_MODE" = drain && saturated=true || saturated=not-run
+printf 'checkpoint=%s\ntree=%s\ncontext_clean=true\nhistory_clean=true\nprivate_health=true\nruntime_pins=true\nnode_fallback_tools=true\nproxy_sentinel_connections=0\nchallenge_smoke=%s\nsaturated_drain=%s\n' "$CHECKPOINT_SHA" "$CHECKPOINT_TREE" "$challenge" "$saturated"
 test "$VERIFY_MODE" = drain && exit 86 || true

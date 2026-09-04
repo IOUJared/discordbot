@@ -5,6 +5,8 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { localVerify } from "./verify-media-sidecar-image-local.mjs"
+
 const SHA = /^[0-9a-f]{40}$/u
 const PROJECT = /^discord-music-sidecar-qa-[0-9a-f]{12}$/u
 const COMMAND =
@@ -74,82 +76,6 @@ function assertText(condition, stage) {
   if (!condition) throw new VerifierError(stage)
 }
 
-function localVerify(values) {
-  const media = readFileSync("Dockerfile.media-sidecar", "utf8")
-  const compose = readFileSync(
-    required(values, "compose", /^docker-compose\.media-sidecar-qa\.yml$/u),
-    "utf8",
-  )
-  const production = readFileSync("docker-compose.yml", "utf8")
-  const ignore = readFileSync(".dockerignore", "utf8")
-  const resolve = readFileSync("apps/media-sidecar/src/resolve.rs", "utf8")
-  const process = readFileSync("apps/media-sidecar/src/process.rs", "utf8")
-  const remote = readFileSync("scripts/verify-media-sidecar-image-remote.sh", "utf8")
-  const pins = [
-    "rust:1.98.0-bookworm@sha256:e536cf316987faedfe8ae120f83b70c7df0068fdb4fc9efcce55c71a625001d5",
-    "debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
-    "tini=0.19.0-1+b3",
-    "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a",
-    "8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530",
-    'ENTRYPOINT ["/usr/bin/tini","-s","--"]',
-  ]
-  assertText(
-    pins.every((pin) => media.includes(pin)),
-    "static-pins",
-  )
-  assertText(
-    !/\b(node|bun|quickjs|ffmpeg)\b/iu.test(media) && !media.includes("test-upstream"),
-    "static-sidecar-denylist",
-  )
-  assertText(
-    compose.match(/^ {2}[a-z][a-z-]*:/gmu)?.join(",") === "  media-sidecar:,  probe:",
-    "static-service-allowlist",
-  )
-  assertText(
-    !/^\s+(ports|volumes|env_file|secrets|configs):/mu.test(compose) &&
-      !/external:\s*true/u.test(compose),
-    "static-resource-denylist",
-  )
-  assertText(
-    compose.includes("qa-${CHECKPOINT_SHA:?") &&
-      production.includes("MEDIA_SIDECAR_URL: http://media-sidecar:3101"),
-    "static-private-wiring",
-  )
-  assertText(
-    !compose.includes("--allow-net") && !production.includes("--allow-net"),
-    "static-deno-health",
-  )
-  const sidecarService = production.split("\n  media-sidecar:")[1]?.split("\n  dashboard:")[0] ?? ""
-  assertText(
-    sidecarService.includes('expose:\n      - "3101"') && !/^\s+ports:/mu.test(sidecarService),
-    "static-no-publish",
-  )
-  assertText(
-    [".git", ".omo", "secrets/", "**/target/", "*cookies*"].every((entry) =>
-      ignore.includes(entry),
-    ),
-    "static-context-denylist",
-  )
-  assertText(
-    resolve.includes('"--proxy".into(),\n        "".into()') &&
-      resolve.includes('"deno:/usr/local/bin/deno".into()'),
-    "static-fixed-extractor",
-  )
-  const childKeys = [...process.matchAll(/\.env\("([A-Z_]+)"/gu)]
-    .map((match) => match[1])
-    .sort()
-    .join(",")
-  assertText(
-    process.includes(".env_clear()") && childKeys === "HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR",
-    "static-child-environment",
-  )
-  assertText(
-    !/docker compose[^\n]* exec/u.test(remote) && remote.includes("checkpoint=%s"),
-    "static-noninteractive-remote",
-  )
-  return { static: true }
-}
-
 function preflight(values) {
   const key = required(values, "ssh-key")
   assertText((statSync(key).mode & 0o777) === 0o600, "key-mode")
@@ -195,6 +121,8 @@ function remoteRun(values, mode) {
   const project = required(values, "project", PROJECT)
   localVerify(
     new Map([["compose", required(values, "compose", /^docker-compose\.media-sidecar-qa\.yml$/u)]]),
+    required,
+    assertText,
   )
   assertText(
     run("git", ["rev-parse", "HEAD"], "local-head") === sha &&
@@ -241,11 +169,23 @@ function cleanupAssert(values) {
   return { cleanup: true }
 }
 
+function remoteInspect(values) {
+  const key = required(values, "ssh-key")
+  assertText((statSync(key).mode & 0o777) === 0o600, "key-mode")
+  const lxc = required(values, "lxc", /^[0-9]+$/u)
+  const sha = required(values, "sha", SHA)
+  const repository = required(values, "repo", /^\/opt\/discord-music$/u)
+  const command = `pct exec ${lxc} -- env ${quote(`CHECKPOINT_SHA=${sha}`)} ${quote(`PRODUCTION_REPO=${repository}`)} bash -se`
+  const output = ssh(values, command, "production-inspect", remoteScript("inspect"))
+  assertText(output.includes(`checkpoint=${sha}`), "production-checkpoint")
+  return output
+}
+
 function main() {
   const command = process.argv[2]
   if (command === undefined || !COMMAND.test(command)) throw new VerifierError("command")
   const values = options(process.argv.slice(3))
-  if (command === "local-verify") return localVerify(values)
+  if (command === "local-verify") return localVerify(values, required, assertText)
   if (command === "remote-preflight-and-verify") return remoteRun(values, "smoke")
   if (command === "remote-verify") {
     if (values.get("expect-injected-failure") !== true)
@@ -254,7 +194,7 @@ function main() {
     return cleanupAssert(values)
   }
   if (command === "remote-cleanup-assert") return cleanupAssert(values)
-  throw new VerifierError("remote-inspect-not-available-before-deployment")
+  return remoteInspect(values)
 }
 
 try {
