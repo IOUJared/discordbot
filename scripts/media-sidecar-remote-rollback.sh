@@ -239,6 +239,17 @@ cas_active() {
   now="$(boottime)"; test "$now" -lt "$(lease_value .deadlineBoottime)" || die lease-deadline
 }
 lease_replace() { local filter="$1"; jq "$filter" "$MS_LEASE" | lease_write; }
+build_image() {
+  local role="$1" tree before
+  tree="$(git -C "$MS_REPO" rev-parse 'HEAD^{tree}')"; before="$run/images-before-build-$role"
+  docker images -q --no-trunc | sort -u >"$before"; chmod 0600 "$before"; sync -f "$before"
+  case "$role" in
+    server) docker build -t "discord-music-server:$MS_SHA" --build-arg "BUILD_SHA=$MS_SHA" --build-arg "BUILD_TREE=$tree" "$MS_REPO";;
+    sidecar) docker build -t "discord-music-media-sidecar:$MS_SHA" -f "$MS_REPO/Dockerfile.media-sidecar" --build-arg "BUILD_SHA=$MS_SHA" --build-arg "BUILD_TREE=$tree" "$MS_REPO";;
+    *) die build-role;;
+  esac
+  remove_new_untagged_images "$before"
+}
 perform() {
   local run_id="$1" sequence="$2" operation="$3" run manifest config working
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
@@ -264,12 +275,11 @@ perform() {
       test -z "$(git -C "$MS_REPO" status --porcelain --untracked-files=all)"
       ;;
     build)
-      local tree before; tree="$(git -C "$MS_REPO" rev-parse 'HEAD^{tree}')"; before="$run/images-before-build"
-      docker images -q --no-trunc | sort -u >"$before"; chmod 0600 "$before"; sync -f "$before"
-      docker build -t "discord-music-server:$MS_SHA" --build-arg "BUILD_SHA=$MS_SHA" --build-arg "BUILD_TREE=$tree" "$MS_REPO"
-      docker build -t "discord-music-media-sidecar:$MS_SHA" -f "$MS_REPO/Dockerfile.media-sidecar" --build-arg "BUILD_SHA=$MS_SHA" --build-arg "BUILD_TREE=$tree" "$MS_REPO"
-      remove_new_untagged_images "$before"
+      build_image server
+      build_image sidecar
       ;;
+    build-server) build_image server;;
+    build-sidecar) build_image sidecar;;
     configure-shadow|configure-rust|configure-disabled)
       local mode="${operation#configure-}" env_temp="${working}/.env.run-$run_id"
       awk -v mode="$mode" -v sha="$MS_SHA" 'BEGIN{modeDone=0;shaDone=0} /^MEDIA_SIDECAR_MODE=/{if(!modeDone){print "MEDIA_SIDECAR_MODE=" mode;modeDone=1}next} /^DEPLOY_SHA=/{if(!shaDone){print "DEPLOY_SHA=" sha;shaDone=1}next} {print} END{if(!modeDone)print "MEDIA_SIDECAR_MODE=" mode;if(!shaDone)print "DEPLOY_SHA=" sha}' "$working/.env" >"$env_temp"
