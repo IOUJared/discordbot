@@ -98,37 +98,32 @@ fi
 if test "$VERIFY_MODE" = drain; then
   stage=saturation-observation
   four_latched=false; deno_latched=false; environment_observed=false
-  docker exec -d "$sidecar" sh -ceu '
-rm -f /tmp/qa-deno-observed /tmp/qa-four-observed
+  docker exec "$sidecar" sh -cu '
+rm -f /tmp/qa-deno-observed
 for attempt in $(seq 1 20000); do
-  count=0; deno_child=false
   for p in /proc/[0-9]*; do
     test -r "$p/comm" || continue
     comm="$(cat "$p/comm")"
     case "$comm" in
-      yt-dlp*) count=$((count+1));;
-      deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) deno_child=true;; esac;;
+      deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) : >/tmp/qa-deno-observed; exit 0;; esac;;
     esac
   done
-  test "$count" -eq 4 && : >/tmp/qa-four-observed
-  $deno_child && : >/tmp/qa-deno-observed
-  test -f /tmp/qa-four-observed && test -f /tmp/qa-deno-observed && exit 0
   sleep 0.001
 done
-exit 1'
+exit 1' >"$raw" 2>&1 & observer_client=$!
   docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
   observed=false; : >"$work/children"
   for attempt in $(seq 1 100); do
     count="$(docker exec "$sidecar" sh -ceu 'count=0; : >/tmp/qa-pids; for p in /proc/[0-9]*; do test -r "$p/comm" || continue; comm="$(cat "$p/comm")"; case "$comm" in yt-dlp*) keys="$(tr "\0" "\n" <"$p/environ" | cut -d= -f1 | sort | paste -sd, -)"; test "$keys" = HOME,LANG,LC_ALL,PATH,SSL_CERT_FILE,TMPDIR; echo "${p##*/}" >>/tmp/qa-pids; count=$((count+1));; esac; done; printf "%s" "$count"')"
     docker exec "$sidecar" cat /tmp/qa-pids >"$work/children"
-    test "$count" -eq 4 && { observed=true; environment_observed=true; }
+    test "$count" -eq 4 && { observed=true; four_latched=true; environment_observed=true; }
     $observed && docker exec "$sidecar" test -f /tmp/qa-deno-observed && break
     sleep 0.1
   done
-  docker exec "$sidecar" test -f /tmp/qa-four-observed && four_latched=true
   docker exec "$sidecar" test -f /tmp/qa-deno-observed && deno_latched=true
+  kill "$observer_client" 2>/dev/null || true
+  wait "$observer_client" 2>/dev/null || true
   $observed
-  $four_latched
   $deno_latched
   stage=host-process-snapshot
   docker top "$sidecar" -eo pid,stat,comm | awk 'NR > 1 { if ($2 ~ /^Z/) exit 1; print $1 }' >"$work/host-pids"
