@@ -425,8 +425,17 @@ task_build_image_ids() {
     done < <(jq -r '.acceptedOperations[]|select(.operation=="build")|.sequence' "$terminal")
   done | sort -u
 }
+task_event_floor() {
+  local candidate run_id manifest
+  for candidate in "$MS_BACKUP"/*; do
+    test -d "$candidate" || continue; run_id="${candidate##*/}"
+    [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || continue
+    manifest="$candidate/manifest.json"; test -r "$manifest" || continue
+    jq -er --arg schema "$MS_SCHEMA" --arg runId "$run_id" 'select(.schema==$schema and .runId==$runId)|.eventCursor' "$manifest" || continue
+  done | sort | head -1
+}
 cleanup_failed_images() {
-  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar pass_removed
+  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed id tags prior_server prior_sidecar pass_removed floor floor_epoch created created_epoch
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
   test "$(lease_value .runId)" = "$run_id" || die wrong-run
   test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
@@ -458,6 +467,21 @@ cleanup_failed_images() {
       tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
       docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1)); pass_removed=$((pass_removed+1))
     done < <(task_build_image_ids)
+    test "$pass_removed" -gt 0 || break
+  done
+  floor="$(task_event_floor)"; test -n "$floor" || die cleanup-event-floor
+  floor_epoch="$(date -d "$floor" +%s)"
+  for _ in $(seq 1 32); do
+    pass_removed=0
+    while read -r id; do
+      test -n "$id" || continue
+      created="$(docker image inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"
+      test "$created_epoch" -ge "$floor_epoch" || continue
+      test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
+      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
+      docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1)); pass_removed=$((pass_removed+1))
+    done < <(docker images -q --filter dangling=true --no-trunc | sort -u)
     test "$pass_removed" -gt 0 || break
   done
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
