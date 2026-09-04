@@ -522,7 +522,7 @@ cleanup_failed_images() {
     test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$revision" || continue
     docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
     docker image rm "$ref" >/dev/null; removed_superseded=$((removed_superseded+1))
-  done < <(for candidate in "$MS_BACKUP"/*/manifest.json; do test -r "$candidate" || continue; jq -r '.selectedSha as $sha|["discord-music-server:($sha)","discord-music-media-sidecar:($sha)"][]' "$candidate"; done | sort -u)
+  done < <(for candidate in "$MS_BACKUP"/*/manifest.json; do test -r "$candidate" || continue; jq -r '.selectedSha as $sha|["discord-music-server:\($sha)","discord-music-media-sidecar:\($sha)"][]' "$candidate"; done | sort -u)
   while read -r ref; do
     test -n "$ref" || continue
     id="$(docker image inspect -f '{{.Id}}' "$ref")"
