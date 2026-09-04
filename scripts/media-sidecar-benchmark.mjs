@@ -50,11 +50,13 @@ function rollout(stage) {
 }
 
 async function live() {
-  const prefix = runToken.slice(0, 8)
-  const warmups = Array.from({ length: 30 }, (_, index) => `music warmup ${prefix} ${index}`)
+  const warmups = Array.from(
+    { length: 30 },
+    (_, index) => `bohemian rhapsody official video warmup ${index}`,
+  )
   const acceptance = Array.from(
     { length: 40 },
-    (_, index) => `official music video acceptance ${prefix} ${index}`,
+    (_, index) => `never gonna give you up official video ${index}`,
   )
   await batches(warmups)
   const acceptStart = events.length
@@ -103,6 +105,7 @@ async function live() {
       operation: "benchmark-live",
       warmups: 30,
       uniqueAcceptance: 40,
+      nonEmptyResults: first.filter(({ results }) => results.length > 0).length,
       disjointKeys: new Set([...warmups, ...acceptance]).size === 70,
       uncached: {
         node: 40,
@@ -136,7 +139,7 @@ async function live() {
 
 async function one(expectedKind) {
   const before = events.length
-  const result = await timedRollout(`music ${expectedKind} ${runToken.slice(0, 8)}`)
+  const result = await timedRollout(`never gonna give you up official video ${expectedKind}`)
   const relevant = events.slice(before)
   const output = {
     private: {},

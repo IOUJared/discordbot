@@ -221,6 +221,7 @@ test("live resolve uses the first non-empty acceptance result", () => {
   const benchmark = readFileSync(new URL("./media-sidecar-benchmark.mjs", import.meta.url), "utf8")
   assert.match(benchmark, /first\.flatMap\(\(\{ results \}\) => results\)\.at\(0\)/u)
   assert.match(benchmark, /resolveSuccess = false[\s\S]+try[\s\S]+catch/u)
+  assert.match(benchmark, /nonEmptyResults: first\.filter/u)
 })
 
 test("public integration output never exposes a random run-id suffix", () => {
