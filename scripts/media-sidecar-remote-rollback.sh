@@ -549,88 +549,115 @@ task_event_floor() {
   done | sort | head -1
 }
 cleanup_failed_images() {
-  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed removed_containers removed_superseded removed_qa id tags ref revision project prior_server prior_sidecar pass_removed floor floor_epoch created created_epoch status mounts labels
+  local run_id="$1" selected_sha="$2" run manifest build_sequence build_log before after removed removed_containers removed_superseded removed_qa id tags ref revision project prior_server prior_sidecar floor floor_epoch created created_epoch status mounts labels used_images candidates config_image
+  local -a selected_refs=() image_ids=() container_ids=() superseded_refs=() qa_refs=()
+  local -A seen_images=() seen_containers=() seen_refs=()
   require_root; require_paths; exec 9>"$MS_LOCK"; flock -x 9
-  test "$(lease_value .runId)" = "$run_id" || die wrong-run
-  test "$(lease_value .selectedSha)" = "$selected_sha" || die selected-sha
-  test "$(lease_value .state)" = expired && test "$(lease_value .restoreState)" = restored || die cleanup-state
+  [[ "$run_id" =~ ^[1-9][0-9]*-[0-9a-f]{32}$ ]] || die cleanup-run-id
+  [[ "$selected_sha" =~ ^[0-9a-f]{40}$ ]] || die cleanup-selected-sha
+  test "$MS_PROJECT" = deploy || die cleanup-project
   run="$MS_BACKUP/$run_id"; manifest="$run/manifest.json"
+  test -r "$manifest" || die cleanup-manifest-missing
+  jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" \
+    '.schema==$schema and .runId==$runId and .selectedSha==$sha and (.priorState.serverImage|test("^sha256:[0-9a-f]{64}$")) and ((.priorState.sidecarImage // "")|test("^(|sha256:[0-9a-f]{64})$"))' "$manifest" >/dev/null || die cleanup-manifest-binding
+  jq -e --arg schema "$MS_SCHEMA" --arg runId "$run_id" --arg sha "$selected_sha" \
+    '.schema==$schema and .runId==$runId and .selectedSha==$sha and .state=="expired" and .restoreState=="restored"' "$MS_LEASE" >/dev/null || die cleanup-lease-binding
   build_sequence="$(terminal_cleanup_build_sequence "$MS_LEASE")" || die cleanup-build-operation
   build_log="$run/operations/$build_sequence.log"; test -r "$build_log" || die cleanup-build-log
-  before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0; removed_superseded=0; removed_qa=0
   prior_server="$(jq -r .priorState.serverImage "$manifest")"; prior_sidecar="$(jq -r '.priorState.sidecarImage // empty' "$manifest")"
-  for tags in "discord-music-server:$selected_sha" "discord-music-media-sidecar:$selected_sha"; do
-    id="$(docker image inspect -f '{{.Id}}' "$tags" 2>/dev/null || true)"; test -n "$id" || continue
-    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && die cleanup-image-in-use
-    docker image rm "$tags" >/dev/null; removed=$((removed+1))
-  done
-  for _ in 1 2 3; do
-    while read -r id; do
-      id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
-      test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
-      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
-      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
-      docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1))
-    done < <(sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p' | awk '!seen[$0]++')
-  done
-  for _ in $(seq 1 32); do
-    pass_removed=0
-    while read -r id; do
-      id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
-      test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
-      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
-      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
-      docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1)); pass_removed=$((pass_removed+1))
-    done < <(task_build_image_ids)
-    test "$pass_removed" -gt 0 || break
-  done
   floor="$(task_event_floor)"; test -n "$floor" || die cleanup-event-floor
-  floor_epoch="$(date -d "$floor" +%s)"
-  while read -r id; do
-    id="$(docker inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
-    status="$(docker inspect -f '{{.State.Status}}' "$id")"; test "$status" = exited || continue
-    mounts="$(docker inspect -f '{{len .Mounts}}' "$id")"; test "$mounts" -eq 0 || continue
-    labels="$(docker inspect -f '{{json .Config.Labels}}' "$id")"; test "$labels" = null || test "$labels" = '{}' || continue
-    created="$(docker inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -ge "$floor_epoch" || continue
-    docker container rm "$id" >/dev/null; removed_containers=$((removed_containers+1))
-  done < <(task_build_container_ids; sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> Running in \([0-9a-f]\{12,64\}\)$/\1/p')
+  floor_epoch="$(date -d "$floor" +%s)" || die cleanup-event-floor
+  used_images="$(docker ps -aq | xargs -r docker inspect -f '{{.Image}}')" || die cleanup-container-images
+
+  for ref in "discord-music-server:$selected_sha" "discord-music-media-sidecar:$selected_sha"; do
+    id="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null || true)"; test -n "$id" || continue
+    [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]] || die cleanup-image-id
+    revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" || die cleanup-image-revision
+    test "$revision" = "$selected_sha" || die cleanup-image-revision
+    grep -Fxq "$id" <<<"$used_images" && die cleanup-image-in-use
+    selected_refs+=("$ref")
+  done
+
+  candidates="$(sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> \([0-9a-f]\{12,64\}\)$/\1/p'; task_build_image_ids)"
   while read -r id; do
     test -n "$id" || continue
-    mounts="$(docker inspect -f '{{len .Mounts}}' "$id")"; test "$mounts" -eq 0 || continue
-    tags="$(docker inspect -f '{{.Config.Image}}' "$id")"
-    docker image inspect -f '{{json .RepoTags}}' "$tags" | grep -Eq '^(null|\[\])$' || continue
-    created="$(docker inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"; test "$created_epoch" -ge "$floor_epoch" || continue
-    docker container rm "$id" >/dev/null; removed_containers=$((removed_containers+1))
-  done < <(docker ps -aq --filter status=exited)
-  for _ in $(seq 1 32); do
-    pass_removed=0
-    while read -r id; do
-      test -n "$id" || continue
-      created="$(docker image inspect -f '{{.Created}}' "$id")"; created_epoch="$(date -d "$created" +%s)"
-      test "$created_epoch" -ge "$floor_epoch" || continue
-      test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
-      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
-      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")"; test "$tags" = null || test "$tags" = '[]' || continue
-      docker image rm "$id" >/dev/null 2>&1 || continue; removed=$((removed+1)); pass_removed=$((pass_removed+1))
-    done < <(docker images -q --filter dangling=true --no-trunc | sort -u)
-    test "$pass_removed" -gt 0 || break
-  done
+    id="$(docker image inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
+    [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]] || die cleanup-image-id
+    test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
+    grep -Fxq "$id" <<<"$used_images" && continue
+    tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")" || die cleanup-image-tags
+    test "$tags" = null || test "$tags" = '[]' || continue
+    test -n "${seen_images[$id]:-}" || { seen_images[$id]=1; image_ids+=("$id"); }
+  done <<<"$candidates"
+
+  candidates="$(task_build_container_ids; sed $'s/\033\[[0-9;]*m//g' "$build_log" | sed -n 's/^ ---> Running in \([0-9a-f]\{12,64\}\)$/\1/p')"
+  while read -r id; do
+    test -n "$id" || continue
+    id="$(docker inspect -f '{{.Id}}' "$id" 2>/dev/null || true)"; test -n "$id" || continue
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || die cleanup-container-id
+    status="$(docker inspect -f '{{.State.Status}}' "$id")" || die cleanup-container-status; test "$status" = exited || continue
+    mounts="$(docker inspect -f '{{len .Mounts}}' "$id")" || die cleanup-container-mounts; test "$mounts" -eq 0 || continue
+    labels="$(docker inspect -f '{{json .Config.Labels}}' "$id")" || die cleanup-container-labels; test "$labels" = null || test "$labels" = '{}' || continue
+    created="$(docker inspect -f '{{.Created}}' "$id")" || die cleanup-container-created
+    created_epoch="$(date -d "$created" +%s)" || die cleanup-container-created; test "$created_epoch" -ge "$floor_epoch" || continue
+    test -n "${seen_containers[$id]:-}" || { seen_containers[$id]=1; container_ids+=("$id"); }
+  done <<<"$candidates"
+
+  candidates="$(docker ps -aq --filter status=exited)" || die cleanup-container-list
+  while read -r id; do
+    test -n "$id" || continue
+    id="$(docker inspect -f '{{.Id}}' "$id")" || die cleanup-container-id
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || die cleanup-container-id
+    mounts="$(docker inspect -f '{{len .Mounts}}' "$id")" || die cleanup-container-mounts; test "$mounts" -eq 0 || continue
+    labels="$(docker inspect -f '{{json .Config.Labels}}' "$id")" || die cleanup-container-labels; test "$labels" = null || test "$labels" = '{}' || continue
+    config_image="$(docker inspect -f '{{.Config.Image}}' "$id")" || die cleanup-container-image
+    tags="$(docker image inspect -f '{{json .RepoTags}}' "$config_image")" || die cleanup-image-tags; test "$tags" = null || test "$tags" = '[]' || continue
+    created="$(docker inspect -f '{{.Created}}' "$id")" || die cleanup-container-created
+    created_epoch="$(date -d "$created" +%s)" || die cleanup-container-created; test "$created_epoch" -ge "$floor_epoch" || continue
+    test -n "${seen_containers[$id]:-}" || { seen_containers[$id]=1; container_ids+=("$id"); }
+  done <<<"$candidates"
+
+  candidates="$(docker images -q --filter dangling=true --no-trunc | sort -u)" || die cleanup-image-list
+  while read -r id; do
+    test -n "$id" || continue
+    [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]] || die cleanup-image-id
+    created="$(docker image inspect -f '{{.Created}}' "$id")" || die cleanup-image-created
+    created_epoch="$(date -d "$created" +%s)" || die cleanup-image-created; test "$created_epoch" -ge "$floor_epoch" || continue
+    test "$id" != "$prior_server" && test "$id" != "$prior_sidecar" || continue
+    grep -Fxq "$id" <<<"$used_images" && continue
+    tags="$(docker image inspect -f '{{json .RepoTags}}' "$id")" || die cleanup-image-tags; test "$tags" = null || test "$tags" = '[]' || continue
+    test -n "${seen_images[$id]:-}" || { seen_images[$id]=1; image_ids+=("$id"); }
+  done <<<"$candidates"
+
   while read -r ref; do
     test -n "$ref" || continue; revision="${ref##*:}"
     test "$revision" != "$selected_sha" || continue
     id="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null || true)"; test -n "$id" || continue
-    test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$revision" || continue
-    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
-    docker image rm "$ref" >/dev/null; removed_superseded=$((removed_superseded+1))
-  done < <(for candidate in "$MS_BACKUP"/*/manifest.json; do test -r "$candidate" || continue; jq -r '.selectedSha as $sha|["discord-music-server:\($sha)","discord-music-media-sidecar:\($sha)"][]' "$candidate"; done | sort -u)
+    [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]] || die cleanup-image-id
+    test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$revision" || die cleanup-image-revision
+    grep -Fxq "$id" <<<"$used_images" && continue
+    test -n "${seen_refs[$ref]:-}" || { seen_refs[$ref]=1; superseded_refs+=("$ref"); }
+  done < <(for candidate in "$MS_BACKUP"/*/manifest.json; do test -r "$candidate" || continue; jq -er 'select(.selectedSha|type=="string" and test("^[0-9a-f]{40}$"))|.selectedSha as $sha|["discord-music-server:\($sha)","discord-music-media-sidecar:\($sha)"][]' "$candidate" || continue; done | sort -u)
+
+  candidates="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^discord-music-(node|media-sidecar):qa-[0-9a-f]{40}$' || true)"
   while read -r ref; do
     test -n "$ref" || continue
-    id="$(docker image inspect -f '{{.Id}}' "$ref")"
-    project="$(docker image inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$ref")"
-    [[ "$project" == discord-music-sidecar-qa-* ]] || continue
-    docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
-    docker image rm "$ref" >/dev/null; removed_qa=$((removed_qa+1))
-  done < <(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^discord-music-(node|media-sidecar):qa-[0-9a-f]{40}$' || true)
+    revision="${ref##*:qa-}"
+    id="$(docker image inspect -f '{{.Id}}' "$ref")" || die cleanup-image-id
+    [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]] || die cleanup-image-id
+    project="$(docker image inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$ref")" || die cleanup-image-project
+    test "$project" = "discord-music-sidecar-qa-${revision:0:12}" || die cleanup-image-project
+    test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$revision" || die cleanup-image-revision
+    grep -Fxq "$id" <<<"$used_images" && continue
+    test -n "${seen_refs[$ref]:-}" || { seen_refs[$ref]=1; qa_refs+=("$ref"); }
+  done <<<"$candidates"
+
+  before="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"; removed=0; removed_containers=0; removed_superseded=0; removed_qa=0
+  for id in "${container_ids[@]}"; do if docker container rm "$id" >/dev/null; then removed_containers=$((removed_containers+1)); fi; done
+  for ref in "${selected_refs[@]}"; do if docker image rm "$ref" >/dev/null; then removed=$((removed+1)); fi; done
+  for id in "${image_ids[@]}"; do if docker image rm "$id" >/dev/null; then removed=$((removed+1)); fi; done
+  for ref in "${superseded_refs[@]}"; do if docker image rm "$ref" >/dev/null; then removed_superseded=$((removed_superseded+1)); fi; done
+  for ref in "${qa_refs[@]}"; do if docker image rm "$ref" >/dev/null; then removed_qa=$((removed_qa+1)); fi; done
   after="$(df -Pm "$MS_REPO" | awk 'NR==2 {print $4}')"
   jq --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '.cleanup={failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}' "$MS_LEASE" | lease_write
   jq -cn --argjson removed "$removed" --argjson containers "$removed_containers" --argjson superseded "$removed_superseded" --argjson qa "$removed_qa" --argjson before "$before" --argjson after "$after" '{ok:true,state:"expired",restoreState:"restored",failedBuildImagesRemoved:$removed,failedBuildContainersRemoved:$containers,supersededSelectedTagsRemoved:$superseded,temporaryQaTagsRemoved:$qa,freeMiBBefore:$before,freeMiBAfter:$after,volumesRemoved:0}'

@@ -1,16 +1,12 @@
-import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import test from "node:test"
 
 const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
-const dispatchMarker = ['case "', "$", '{1:-}" in'].join("")
-
 const buildLog = (imageId, containerId) => ` ---> ${imageId}\n ---> Running in ${containerId}\n`
 
-function withFixture(callback) {
+export function withFixture(callback) {
   const fixture = mkdtempSync(join(tmpdir(), "media-failed-build-cleanup-"))
   const backup = join(fixture, "backups")
   const repo = join(fixture, "repo")
@@ -29,8 +25,7 @@ function withFixture(callback) {
 
   mkdirSync(join(run, "operations"), { recursive: true })
   mkdirSync(join(historicalRun, "operations"), { recursive: true })
-  mkdirSync(repo)
-  mkdirSync(bin)
+  for (const path of [repo, bin]) mkdirSync(path)
   for (const path of [lock, dockerLog, removedImages, removedContainers]) writeFileSync(path, "")
 
   const injection = `
@@ -53,6 +48,9 @@ docker() {
     case "${"$"}format" in
       '{{.Id}}') printf '%s\\n' "${"$"}normalized" ;;
       '{{json .RepoTags}}') printf 'null\\n' ;;
+      '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+        test "${"$"}target" = 'discord-music-media-sidecar:${selectedSha}' && printf '%s\\n' "${"$"}SIDECAR_REVISION" || printf '%s\\n' "${"$"}SERVER_REVISION"
+        ;;
       *) return 1 ;;
     esac
     return 0
@@ -77,7 +75,7 @@ docker() {
   return 1
 }
 `
-  const split = owner.indexOf(dispatchMarker)
+  const split = owner.indexOf(['case "', "$", '{1:-}" in'].join(""))
   writeFileSync(ownerPath, `${owner.slice(0, split)}${injection}${owner.slice(split)}`)
   chmodSync(ownerPath, 0o700)
   writeFileSync(
@@ -99,6 +97,7 @@ exit 1
     state = "expired",
     restoreState = "restored",
     logSequence = sequence,
+    manifestCase = "valid",
   }) => {
     writeFileSync(dockerLog, "")
     writeFileSync(removedImages, "")
@@ -115,11 +114,21 @@ exit 1
         sidecarImage: `sha256:${"2".repeat(64)}`,
       },
     }
+    if (manifestCase === "wrong-schema") manifest.schema = "wrong"
+    if (manifestCase === "missing-schema") delete manifest.schema
+    if (manifestCase === "wrong-run") manifest.runId = `8-${"d".repeat(32)}`
+    if (manifestCase === "missing-run") delete manifest.runId
+    if (manifestCase === "wrong-sha") manifest.selectedSha = "e".repeat(40)
+    if (manifestCase === "missing-sha") delete manifest.selectedSha
     const acceptedOperations = [{ operation, sequence, status }]
-    writeFileSync(join(run, "manifest.json"), JSON.stringify(manifest))
+    writeFileSync(
+      join(run, "manifest.json"),
+      manifestCase === "malformed" ? "{" : JSON.stringify(manifest),
+    )
     writeFileSync(
       lease,
       JSON.stringify({
+        schema: "discord-music-deploy-lease.v1",
         runId,
         selectedSha,
         state,
@@ -156,7 +165,14 @@ exit 1
     )
   }
 
-  const invoke = ({ callRunId = runId, callSha = selectedSha, inUseImage = "" } = {}) =>
+  const invoke = ({
+    callRunId = runId,
+    callSha = selectedSha,
+    inUseImage = "",
+    project = "deploy",
+    serverRevision = selectedSha,
+    sidecarRevision = selectedSha,
+  } = {}) =>
     spawnSync("bash", [ownerPath, "cleanup-failed-images", callRunId, callSha], {
       encoding: "utf8",
       env: {
@@ -166,6 +182,9 @@ exit 1
         MEDIA_LOCK_FILE: lock,
         MEDIA_REPO: repo,
         DOCKER_IN_USE_IMAGE: inUseImage,
+        MEDIA_COMPOSE_PROJECT: project,
+        SERVER_REVISION: serverRevision,
+        SIDECAR_REVISION: sidecarRevision,
         PATH: `${bin}:${process.env.PATH}`,
       },
     })
@@ -177,66 +196,10 @@ exit 1
       lease,
       removedContainers,
       removedImages,
+      run,
       writeScenario,
     })
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
 }
-
-test("failed split builds are cleaned through the fenced owner entrypoint", () => {
-  withFixture(({ invoke, removedContainers, removedImages, writeScenario }) => {
-    for (const operation of ["build", "build-server", "build-sidecar"]) {
-      writeScenario({ operation })
-      const result = invoke()
-      assert.equal(result.status, 0, `${operation}: ${result.stderr}`)
-      const output = JSON.parse(result.stdout)
-      assert.equal(output.ok, true)
-      assert.equal(output.volumesRemoved, 0)
-      const images = readFileSync(removedImages, "utf8")
-      const containers = readFileSync(removedContainers, "utf8")
-      assert.match(images, new RegExp(`discord-music-server:${"b".repeat(40)}`, "u"))
-      assert.match(images, new RegExp(`sha256:${"a".repeat(64)}`, "u"))
-      assert.match(images, new RegExp(`sha256:${"c".repeat(64)}`, "u"))
-      assert.doesNotMatch(images, new RegExp(`sha256:${"1".repeat(64)}`, "u"))
-      assert.doesNotMatch(images, new RegExp(`sha256:${"2".repeat(64)}`, "u"))
-      assert.match(containers, new RegExp("b".repeat(64), "u"))
-      assert.match(containers, new RegExp("d".repeat(64), "u"))
-    }
-  })
-})
-
-test("failed-build cleanup rejects invalid ownership records before Docker mutation", () => {
-  withFixture(({ dockerLog, invoke, lease, writeScenario }) => {
-    for (const scenario of [
-      { operation: "configure-rust" },
-      { operation: "build-server", sequence: "../5" },
-      { operation: "build-sidecar", logSequence: null },
-      { operation: "build-server", status: "succeeded" },
-      { operation: "build-sidecar", state: "active", restoreState: "idle" },
-    ]) {
-      writeScenario(scenario)
-      const beforeLease = readFileSync(lease, "utf8")
-      const result = invoke()
-      assert.equal(result.status, 1, JSON.stringify(scenario))
-      assert.equal(readFileSync(dockerLog, "utf8"), "", JSON.stringify(scenario))
-      assert.equal(readFileSync(lease, "utf8"), beforeLease, JSON.stringify(scenario))
-    }
-    writeScenario({ operation: "build-server" })
-    assert.equal(invoke({ callRunId: `8-${"d".repeat(32)}` }).status, 1)
-    assert.equal(readFileSync(dockerLog, "utf8"), "")
-    writeScenario({ operation: "build-sidecar" })
-    assert.equal(invoke({ callSha: "e".repeat(40) }).status, 1)
-    assert.equal(readFileSync(dockerLog, "utf8"), "")
-  })
-})
-
-test("failed-build cleanup refuses to remove a selected image used by any container", () => {
-  withFixture(({ invoke, removedImages, writeScenario }) => {
-    writeScenario({ operation: "build-server" })
-    const result = invoke({ inUseImage: `sha256:${"e".repeat(64)}` })
-    assert.equal(result.status, 1)
-    assert.equal(result.stderr.trim(), '{"ok":false,"stage":"cleanup-image-in-use"}')
-    assert.equal(readFileSync(removedImages, "utf8"), "")
-  })
-})
