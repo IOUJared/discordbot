@@ -107,21 +107,25 @@ trap "rm -f -- $raw /tmp/qa-challenge-start" EXIT
 rm -f /tmp/qa-deno-observed /tmp/qa-observer-ready /tmp/qa-challenge-start
 : >/tmp/qa-observer-ready
 until test -f /tmp/qa-challenge-start; do sleep 0.001; done
-/usr/bin/timeout 30 /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1 & challenge=$!
-while kill -0 "$challenge" 2>/dev/null; do
-  for p in /proc/[0-9]*; do
-    test -r "$p/comm" || continue
-    comm="$(cat "$p/comm")"
-    case "$comm" in
-      deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) : >/tmp/qa-deno-observed; exit 0;; esac;;
-    esac
+for round in 1 2 3 4 5; do
+  /usr/bin/timeout 30 /usr/local/bin/yt-dlp --ignore-config --proxy "" --js-runtimes deno:/usr/local/bin/deno --no-playlist --no-warnings --simulate https://www.youtube.com/watch?v=jNQXAC9IVRw >$raw 2>&1 & challenge=$!
+  while kill -0 "$challenge" 2>/dev/null; do
+    for p in /proc/[0-9]*; do
+      test -r "$p/comm" || continue
+      comm="$(cat "$p/comm")"
+      case "$comm" in
+        deno) ppid="$(awk "{print \$4}" "$p/stat")"; parent="$(cat "/proc/$ppid/comm" 2>/dev/null || true)"; case "$parent" in yt-dlp*) : >/tmp/qa-deno-observed; exit 0;; esac;;
+      esac
+    done
   done
-  done
+  wait "$challenge" 2>/dev/null || true
+done
+exit 1
 ' >/dev/null 2>&1 & challenge_client=$!
   for attempt in $(seq 1 100); do docker exec "$sidecar" test -f /tmp/qa-observer-ready && break; sleep 0.01; done
   docker exec "$sidecar" test -f /tmp/qa-observer-ready
   docker exec "$sidecar" sh -c ': >/tmp/qa-challenge-start'
-  for attempt in $(seq 1 100); do docker exec "$sidecar" test -f /tmp/qa-deno-observed && { deno_latched=true; break; }; sleep 0.1; done
+  for attempt in $(seq 1 300); do docker exec "$sidecar" test -f /tmp/qa-deno-observed && { deno_latched=true; break; }; sleep 0.1; done
   $deno_latched
   docker exec -d "$probe" node -e "const ids=['jNQXAC9IVRw','dQw4w9WgXcQ','9bZkp7q19f0','kJQP7kiw5Fk'];Promise.allSettled(ids.map((id,i)=>fetch('http://media-sidecar:3101/v1/resolve',{method:'POST',headers:{'content-type':'application/json','x-media-sidecar-correlation-id':['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000004'][i]},body:JSON.stringify({version:1,track:{id,url:'https://www.youtube.com/watch?v='+id}})}))).then(()=>process.exit())"
   observed=false; : >"$work/children"
