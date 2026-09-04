@@ -48,6 +48,19 @@ cleanup_retention_locked() {
     rm -rf -- "$candidate"
   done < <(find "$MS_BACKUP" -mindepth 1 -maxdepth 1 -type d -mtime "+$MS_RETENTION_DAYS" -print0)
 }
+remove_new_untagged_images() {
+  local before="$1" after="${before}.after" id tags
+  docker images -q --no-trunc | sort -u >"$after"; chmod 0600 "$after"
+  for _ in 1 2 3; do
+    while read -r id; do
+      test -n "$id" || continue
+      tags="$(docker image inspect -f '{{json .RepoTags}}' "$id" 2>/dev/null || true)"; test "$tags" = null || test "$tags" = '[]' || continue
+      docker ps -aq | xargs -r docker inspect -f '{{.Image}}' | grep -Fxq "$id" && continue
+      docker image rm "$id" >/dev/null 2>&1 || true
+    done < <(comm -13 "$before" "$after")
+  done
+  rm -f -- "$after"
+}
 require_root() { test "$(id -u)" -eq 0 || die root-required; }
 require_paths() {
   test "$MS_REPO" = /opt/discord-music || die wrong-repository
@@ -188,9 +201,11 @@ perform() {
       test -z "$(git -C "$MS_REPO" diff --name-only)"
       ;;
     build)
-      local tree; tree="$(git -C "$MS_REPO" rev-parse 'HEAD^{tree}')"
+      local tree before; tree="$(git -C "$MS_REPO" rev-parse 'HEAD^{tree}')"; before="$run/images-before-build"
+      docker images -q --no-trunc | sort -u >"$before"; chmod 0600 "$before"; sync -f "$before"
       docker build -t "discord-music-server:$MS_SHA" --build-arg "BUILD_SHA=$MS_SHA" --build-arg "BUILD_TREE=$tree" "$MS_REPO"
       docker build -t "discord-music-media-sidecar:$MS_SHA" -f "$MS_REPO/Dockerfile.media-sidecar" --build-arg "BUILD_SHA=$MS_SHA" --build-arg "BUILD_TREE=$tree" "$MS_REPO"
+      remove_new_untagged_images "$before"
       ;;
     configure-shadow|configure-rust|configure-disabled)
       local mode="${operation#configure-}" env_temp="${working}/.env.run-$run_id"
