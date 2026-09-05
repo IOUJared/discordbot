@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { gzipSync } from "node:zlib"
 
 const SHA = /^[0-9a-f]{40}$/u
 const RUN_ID = /^[1-9][0-9]*-[0-9a-f]{32}$/u
@@ -60,6 +61,10 @@ export function required(values, name, pattern) {
 
 export function redactRunId(runId) {
   return runId.replace(/-[0-9a-f]{32}$/u, "-<redacted>")
+}
+
+export function encodeOwnerPayload(owner) {
+  return gzipSync(owner).toString("base64")
 }
 
 export class RemoteClient {
@@ -146,7 +151,7 @@ export class RemoteClient {
   begin(sha, kind, deadlineSeconds) {
     assertValue(SHA.test(sha), "selected-sha")
     const env = this.baseEnvironment(sha, {
-      MEDIA_OWNER_B64: this.owner.toString("base64"),
+      MEDIA_OWNER_GZIP_B64: encodeOwnerPayload(this.owner),
       MEDIA_RUN_KIND: kind,
       MEDIA_DEADLINE_SECONDS: String(deadlineSeconds),
     })

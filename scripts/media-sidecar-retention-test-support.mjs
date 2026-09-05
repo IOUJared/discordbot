@@ -13,6 +13,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { gzipSync } from "node:zlib"
 import { installOwnerAdapters } from "./media-sidecar-owner-adapters.mjs"
 
 const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url), "utf8")
@@ -150,7 +151,7 @@ export function withRetentionFixture(callback) {
     MEDIA_OWNER_TEST_ROOT: fixture,
     MEDIA_OWNER_TEST_UID: String(uid),
     MEDIA_SELECTED_SHA: hex("8", 40),
-    MEDIA_OWNER_B64: Buffer.from("#!/usr/bin/env bash\nexit 0\n").toString("base64"),
+    MEDIA_OWNER_GZIP_B64: gzipSync(Buffer.from("#!/usr/bin/env bash\nexit 0\n")).toString("base64"),
     MEDIA_COMPOSE_PROJECT: "deploy",
     TEST_CONFIG: config,
     TEST_LOCK: lock,

@@ -12,7 +12,7 @@ readonly MS_LEASE="${MEDIA_LEASE_FILE:-$MS_BACKUP/active.json}"
 readonly MS_COUNTER="${MEDIA_RUN_COUNTER:-$MS_BACKUP/run-counter}"
 readonly MS_PROJECT="${MEDIA_COMPOSE_PROJECT:-}"
 readonly MS_SHA="${MEDIA_SELECTED_SHA:-}"
-readonly MS_OWNER_B64="${MEDIA_OWNER_B64:-}"
+readonly MS_OWNER_GZIP_B64="${MEDIA_OWNER_GZIP_B64:-}"
 readonly MS_DEADLINE_SECONDS="${MEDIA_DEADLINE_SECONDS:-600}"
 readonly MS_SELF="${BASH_SOURCE[0]:-/dev/stdin}"
 readonly MS_RETENTION_DAYS="${MEDIA_RETENTION_DAYS:-7}"
@@ -902,7 +902,7 @@ begin_run() {
   trap 'test -n "${temp:-}" && test -d "$temp" && rm -rf -- "$temp"' ERR
   mkdir -m 0700 "$temp"; config="$(active_config)"; working="$(dirname "$config")"; env_file="$working/.env"
   cp -p "$config" "$temp/compose.yaml"; cp -p "$env_file" "$temp/deploy.env"; chmod 0600 "$temp/compose.yaml" "$temp/deploy.env"
-  printf '%s' "$MS_OWNER_B64" | base64 -d >"$temp/owner.sh"; chmod 0700 "$temp/owner.sh"
+  printf '%s' "$MS_OWNER_GZIP_B64" | base64 -d | gzip -d >"$temp/owner.sh"; chmod 0700 "$temp/owner.sh"
   state="$(state_json "$config")"; health="$(public_health)"; cursor="$(date --iso-8601=ns)"
   jq -cn --arg schema "$MS_SCHEMA" --arg runId "$run_id" --argjson generation "$generation" --arg selectedSha "$MS_SHA" \
     --arg kind "${MEDIA_RUN_KIND:-deployment}" --arg configPath "$config" --arg workingDir "$working" --arg eventCursor "$cursor" \

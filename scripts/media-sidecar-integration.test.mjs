@@ -23,7 +23,8 @@ import "./media-sidecar-remote-rollback.cases.mjs"
 import "./media-sidecar-retention-hardening.cases.mjs"
 import "./media-sidecar-storage.cases.mjs"
 import "./media-sidecar-storage-guards.cases.mjs"
-import { redactRunId } from "./media-sidecar-remote-client.mjs"
+import { gunzipSync } from "node:zlib"
+import { encodeOwnerPayload, redactRunId } from "./media-sidecar-remote-client.mjs"
 import { validateObservation } from "./media-sidecar-run-model.mjs"
 
 test("observation schema is private and rejects identifiers and secrets", () => {
@@ -79,4 +80,16 @@ test("live acceptance stays within search plus preload extractor capacity", () =
 
 test("public integration output never exposes a random run-id suffix", () => {
   assert.equal(redactRunId(`12-${"a".repeat(32)}`), "12-<redacted>")
+})
+
+test("deployment owner payload stays below the Linux per-argument limit", () => {
+  // Given: the real owner has grown beyond the safe raw Base64 transport size.
+  const owner = readFileSync(new URL("./media-sidecar-remote-rollback.sh", import.meta.url))
+
+  // When: the remote client prepares its environment payload.
+  const encoded = encodeOwnerPayload(owner)
+
+  // Then: compression is effective enough to leave substantial argument headroom.
+  assert.ok(Buffer.byteLength(encoded) < 64 * 1024)
+  assert.deepEqual(gunzipSync(Buffer.from(encoded, "base64")), owner)
 })
