@@ -32,6 +32,49 @@ describe("YouTube search cache and cancellation", () => {
     expect(executions).toBe(2)
   })
 
+  it("Given equivalent Unicode and whitespace When searches repeat Then one upstream call is used", async () => {
+    // Given
+    let executions = 0
+    const source = new YouTubeMusicSource(undefined, undefined, {
+      searchClient: {
+        async search() {
+          executions += 1
+          return searchResults
+        },
+      },
+    })
+
+    // When
+    await source.search("  CAFÉ\tＤＡＦＴ  ")
+    await source.search("cafe\u0301 daft")
+
+    // Then
+    expect(executions).toBe(1)
+  })
+
+  it("Given the default cache When five minutes pass Then a repeat remains cached", async () => {
+    // Given
+    let now = 1_000
+    let executions = 0
+    const source = new YouTubeMusicSource(undefined, undefined, {
+      now: () => now,
+      searchClient: {
+        async search() {
+          executions += 1
+          return searchResults
+        },
+      },
+    })
+    await source.search("Daft Punk")
+
+    // When
+    now += 5 * 60_000
+    await source.search("daft punk")
+
+    // Then
+    expect(executions).toBe(1)
+  })
+
   it("coalesces concurrent normalized searches into one upstream request", async () => {
     // Given
     let executions = 0
