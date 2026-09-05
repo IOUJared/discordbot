@@ -98,12 +98,16 @@ test("daemon quiet windows ignore periodic healthcheck exec noise", () => {
   const prefix = source.slice(0, source.indexOf("preflight() {"))
   const probe = `${prefix}
 docker() {
-  printf '%s\\n' '{"Action":"exec_create: probe"}' '{"Action":"exec_start: probe"}' '{"Action":"exec_die"}' '{"Action":"create"}'
+  printf '%s\\n' '{"Action":"exec_create: probe"}' '{"Action":"exec_start: probe"}' '{"Action":"exec_die"}' '{"Action":"health_status: healthy"}' '{"Action":"create"}'
 }
 test "$(project_mutation_event_count 1 2)" = 1
 `
   const result = spawnSync("bash", ["-s"], { input: probe, encoding: "utf8" })
   assert.equal(result.status, 0, result.stderr)
+})
+
+test("restore readiness window allows slow Discord gateway startup", () => {
+  assert.match(source, /for _ in \$\(seq 1 90\); do sample1=/u)
 })
 
 test("lease temp cleanup is fenced by terminal state and strict file validation", () => {

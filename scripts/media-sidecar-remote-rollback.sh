@@ -304,7 +304,7 @@ json_fingerprint() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
 state_fingerprint() { local state; state="$(state_json "$1")"; json_fingerprint "$state"; }
 project_mutation_event_count() {
   docker events --since "$1" --until "$2" --filter "label=com.docker.compose.project=$MS_PROJECT" --format '{{json .}}' |
-    jq -sc '[.[]|select(.Action|test("^(create|start|stop|die|kill|destroy|restart|rename|health_status)"))]|length'
+    jq -sc '[.[]|select(.Action|test("^(create|start|stop|die|kill|destroy|restart|rename)"))]|length'
 }
 preflight() {
   require_root; require_paths
@@ -1142,7 +1142,7 @@ restore_locked() {
     fi
     docker compose -p "$MS_PROJECT" -f "$config" up -d --force-recreate --remove-orphans >/dev/null 2>&1
     sample1=""
-    for _ in $(seq 1 30); do sample1="$(state_fingerprint "$config" 2>/dev/null || true)"; test "$sample1" = "$desired" && break; sleep 1; done
+    for _ in $(seq 1 90); do sample1="$(state_fingerprint "$config" 2>/dev/null || true)"; test "$sample1" = "$desired" && break; sleep 1; done
     test "$sample1" = "$desired" || { jq '.reconcilePasses += 1 | .stableSamples=0' "$MS_LEASE" | lease_write; continue; }
     if test ! -e "$marker"; then : >"$marker"; chmod 0600 "$marker"; sync -f "$marker"; sync -f "$run"; fi
     events_since="$(date +%s)"; sleep 5; sample2="$(state_fingerprint "$config" 2>/dev/null || true)"; events_until="$(date +%s)"
