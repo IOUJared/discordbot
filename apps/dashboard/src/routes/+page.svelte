@@ -29,7 +29,7 @@
   const authErrorCopy: Record<string, string> = {
     discord_denied: "Sign-in cancelled at Discord",
     invalid_state: "That sign-in link expired — start again",
-    not_authorized: "Your Discord account is not on the allow list",
+    not_authorized: "Your Discord account does not have access to this room",
     not_in_guild: "Join the server first, then sign in again",
     oauth_failed: "Discord rejected the sign-in",
     invalid_callback: "Discord sent an incomplete callback",

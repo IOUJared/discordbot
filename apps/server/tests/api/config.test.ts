@@ -34,6 +34,12 @@ describe("server configuration", () => {
     expect(() => parseConfig({ ...valid, FRONTEND_URL: "javascript:alert(1)" })).toThrow()
   })
 
+  it("Given allowed role ids When parsed Then they are split and trimmed", () => {
+    const config = parseConfig({ ...valid, DISCORD_ALLOWED_ROLE_IDS: " noble , staff ," })
+
+    expect([...config.allowedRoleIds]).toEqual(["noble", "staff"])
+  })
+
   it("Given a control channel When parsed Then it is exposed", () => {
     const config = parseConfig({ ...valid, DISCORD_CONTROL_CHANNEL_ID: "channel-1" })
 

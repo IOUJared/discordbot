@@ -62,11 +62,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       return redirectError(reply, deps.config.frontendUrl, "invalid_state")
     try {
       const identity = await deps.oauth.exchange(parsed.data.code, state.verifier)
-      if (!deps.config.authorizedUserIds.has(identity.id)) {
+      const roles = await deps.oauth.memberRoles(identity.id)
+      if (roles === null) return redirectError(reply, deps.config.frontendUrl, "not_in_guild")
+      const allowedByRole = roles.some((role) => deps.config.allowedRoleIds.has(role))
+      if (!deps.config.authorizedUserIds.has(identity.id) && !allowedByRole) {
         return redirectError(reply, deps.config.frontendUrl, "not_authorized")
-      }
-      if (!(await deps.oauth.isGuildMember(identity.id))) {
-        return redirectError(reply, deps.config.frontendUrl, "not_in_guild")
       }
       const issued = deps.exchangeCodes.issue(UserIdSchema.parse(identity.id))
       return reply.redirect(`${deps.config.frontendUrl}/#code=${encodeURIComponent(issued.value)}`)

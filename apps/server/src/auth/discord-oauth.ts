@@ -3,12 +3,13 @@ import { z } from "zod"
 
 const tokenSchema = z.object({ access_token: z.string().min(1) })
 const userSchema = z.object({ id: z.string().min(1), username: z.string().min(1) })
+const memberSchema = z.object({ roles: z.array(z.string()) })
 
 export type DiscordIdentity = Readonly<z.infer<typeof userSchema>>
 
 export interface DiscordOAuth {
   exchange(code: string, verifier: string): Promise<DiscordIdentity>
-  isGuildMember(userId: string): Promise<boolean>
+  memberRoles(userId: string): Promise<readonly string[] | null>
 }
 
 export type DiscordOAuthOptions = {
@@ -51,7 +52,7 @@ export class KyDiscordOAuth implements DiscordOAuth {
     )
   }
 
-  async isGuildMember(userId: string): Promise<boolean> {
+  async memberRoles(userId: string): Promise<readonly string[] | null> {
     const response = await ky.get(
       `${this.options.apiUrl}/guilds/${encodeURIComponent(this.options.guildId)}/members/${encodeURIComponent(userId)}`,
       {
@@ -61,6 +62,8 @@ export class KyDiscordOAuth implements DiscordOAuth {
         headers: { authorization: `Bot ${this.options.botToken}` },
       },
     )
-    return response.status === 200
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error(`Discord member lookup failed: ${response.status}`)
+    return memberSchema.parse(await response.json()).roles
   }
 }

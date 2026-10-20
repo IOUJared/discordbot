@@ -149,7 +149,12 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()))
 })
 
-async function fixture(): Promise<{
+type FixtureOptions = {
+  readonly identityId?: string
+  readonly roles?: readonly string[] | null
+}
+
+async function fixture(options: FixtureOptions = {}): Promise<{
   readonly app: FastifyInstance
   readonly player: FakePlayer
   readonly playlistSignals: readonly (AbortSignal | undefined)[]
@@ -166,6 +171,7 @@ async function fixture(): Promise<{
       guildId: "guild",
       discordOwnerId: "user-a",
       authorizedUserIds: new Set(["user-a"]),
+      allowedRoleIds: new Set(["noble"]),
       frontendUrl: "https://music.example.com",
       frontendOrigin: "https://music.example.com",
       publicUrl: "https://api.example.com",
@@ -177,8 +183,8 @@ async function fixture(): Promise<{
       discordApiUrl: "https://discord.com/api/v10",
     },
     oauth: {
-      exchange: async () => ({ id: "user-a", username: "user" }),
-      isGuildMember: async () => true,
+      exchange: async () => ({ id: options.identityId ?? "user-a", username: "user" }),
+      memberRoles: async () => (options.roles === undefined ? [] : options.roles),
     },
     oauthStates: new OAuthStateStore(
       () => 1_000,
@@ -489,6 +495,36 @@ describe("Fastify API", () => {
     })
     expect(response.statusCode).toBe(302)
     expect(response.headers.location).toBe("https://music.example.com/#code=code")
+  })
+
+  it("Given a member holding the allowed role When the callback returns Then it exchanges", async () => {
+    const { app } = await fixture({ identityId: "role-holder", roles: ["noble"] })
+    await app.inject({ method: "GET", url: "/auth/discord" })
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/discord/callback?code=code&state=random",
+    })
+    expect(response.headers.location).toBe("https://music.example.com/#code=code")
+  })
+
+  it("Given a member without the allowed role When the callback returns Then it redirects with not_authorized", async () => {
+    const { app } = await fixture({ identityId: "outsider", roles: ["guest"] })
+    await app.inject({ method: "GET", url: "/auth/discord" })
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/discord/callback?code=code&state=random",
+    })
+    expect(response.headers.location).toBe("https://music.example.com/#error=not_authorized")
+  })
+
+  it("Given a user outside the guild When the callback returns Then it redirects with not_in_guild", async () => {
+    const { app } = await fixture({ identityId: "stranger", roles: null })
+    await app.inject({ method: "GET", url: "/auth/discord" })
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/discord/callback?code=code&state=random",
+    })
+    expect(response.headers.location).toBe("https://music.example.com/#error=not_in_guild")
   })
 
   it("Given Discord denies consent When the callback returns Then it redirects with discord_denied", async () => {

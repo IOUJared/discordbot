@@ -12,6 +12,7 @@ const envSchema = z.object({
   DISCORD_GUILD_ID: z.string().min(1),
   DISCORD_OWNER_ID: z.string().min(1),
   DISCORD_CONTROL_CHANNEL_ID: z.string().min(1).optional(),
+  DISCORD_ALLOWED_ROLE_IDS: z.string().default(""),
   AUTHORIZED_USERS: z.string().default(""),
   FRONTEND_URL: httpUrl,
   PUBLIC_URL: httpUrl,
@@ -38,6 +39,7 @@ export type ServerConfig = {
   readonly guildId: string
   readonly discordOwnerId: string
   readonly controlChannelId?: string
+  readonly allowedRoleIds: ReadonlySet<string>
   readonly authorizedUserIds: ReadonlySet<string>
   readonly frontendUrl: string
   readonly frontendOrigin: string
@@ -79,6 +81,11 @@ export function parseConfig(
       .map((id) => id.trim())
       .filter((id) => id.length > 0),
   ])
+  const allowedRoleIds = new Set(
+    parsed.DISCORD_ALLOWED_ROLE_IDS.split(",")
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+  )
   const frontend = new URL(parsed.FRONTEND_URL)
   return {
     discordToken: parsed.DISCORD_TOKEN,
@@ -90,6 +97,7 @@ export function parseConfig(
       ? {}
       : { controlChannelId: parsed.DISCORD_CONTROL_CHANNEL_ID }),
     authorizedUserIds,
+    allowedRoleIds,
     frontendUrl: parsed.FRONTEND_URL.replace(/\/$/, ""),
     frontendOrigin: frontend.origin,
     publicUrl: parsed.PUBLIC_URL.replace(/\/$/, ""),

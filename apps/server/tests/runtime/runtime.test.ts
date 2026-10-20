@@ -112,6 +112,7 @@ describe("server runtime", () => {
       guildId: "guild",
       discordOwnerId: "owner",
       authorizedUserIds: new Set(["owner"]),
+      allowedRoleIds: new Set<string>(),
       frontendUrl: "https://music.example.com",
       frontendOrigin: "https://music.example.com",
       publicUrl: "https://api.example.com",

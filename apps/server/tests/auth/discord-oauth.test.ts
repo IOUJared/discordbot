@@ -45,7 +45,7 @@ describe("Discord OAuth wire adapter", () => {
     expect(new URLSearchParams(tokenBody).get("code_verifier")).toBe("pkce-verifier")
   })
 
-  it("Given Discord returns a missing guild member When checked Then membership is false", async () => {
+  it("Given Discord returns a missing guild member When roles are read Then membership is null", async () => {
     const server = createServer((_request, response) => {
       response.statusCode = 404
       response.end()
@@ -57,7 +57,22 @@ describe("Discord OAuth wire adapter", () => {
     if (address === null || typeof address === "string") throw new TypeError("Expected TCP address")
     const oauth = adapter(`http://127.0.0.1:${address.port}`)
 
-    expect(await oauth.isGuildMember("user-a")).toBe(false)
+    expect(await oauth.memberRoles("user-a")).toBeNull()
+  })
+
+  it("Given a guild member When roles are read Then their role ids are returned", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("content-type", "application/json")
+      response.end(JSON.stringify({ roles: ["noble", "everyone"] }))
+    })
+    servers.push(server)
+    server.listen(0, "127.0.0.1")
+    await once(server, "listening")
+    const address = server.address()
+    if (address === null || typeof address === "string") throw new TypeError("Expected TCP address")
+    const oauth = adapter(`http://127.0.0.1:${address.port}`)
+
+    expect(await oauth.memberRoles("user-a")).toEqual(["noble", "everyone"])
   })
 })
 
