@@ -39,9 +39,10 @@ export const seekSchema = z.object({ positionMs: z.number().int().nonnegative() 
 export const volumeSchema = z.object({ volume: VolumeSchema }).strict()
 export const loopSchema = z.object({ loopMode: LoopModeSchema }).strict()
 export const joinSchema = z.object({ channelId: ChannelIdSchema }).strict()
-export const oauthCallbackSchema = z
-  .object({ code: z.string().min(1).max(2048), state: z.string().min(1).max(2048) })
-  .strict()
+export const oauthCallbackSchema = z.object({
+  code: z.string().min(1).max(2048),
+  state: z.string().min(1).max(2048),
+})
 export const wsAuthSchema = z
   .object({ type: z.literal("auth"), token: z.string().min(1).max(2048) })
   .strict()

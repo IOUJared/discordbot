@@ -16,6 +16,18 @@ export type AuthRouteDeps = {
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {
+  app.addHook("onRequest", async (request) => {
+    if (!request.url.startsWith("/auth/")) return
+    request.log.info(
+      {
+        method: request.method,
+        path: request.url.split("?")[0],
+        queryKeys: [...new URL(request.url, "http://localhost").searchParams.keys()],
+      },
+      "auth.request",
+    )
+  })
+
   app.get("/auth/discord", async (_request, reply) => {
     const issued = deps.oauthStates.issue()
     const query = new URLSearchParams({
@@ -31,8 +43,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
   })
 
   app.get("/auth/discord/callback", async (request, reply) => {
-    const parsed = oauthCallbackSchema.safeParse(request.query)
-    if (!parsed.success) return redirectError(reply, deps.config.frontendUrl, "invalid_callback")
+    const query = typeof request.query === "object" && request.query !== null ? request.query : {}
+    const queryKeys = Object.keys(query)
+    if ("error" in query) {
+      request.log.warn({ queryKeys }, "oauth.callback.denied")
+      return redirectError(reply, deps.config.frontendUrl, "discord_denied")
+    }
+    const parsed = oauthCallbackSchema.safeParse(query)
+    if (!parsed.success) {
+      request.log.warn(
+        { queryKeys, issues: parsed.error.issues.map((issue) => issue.message) },
+        "oauth.callback.invalid",
+      )
+      return redirectError(reply, deps.config.frontendUrl, "invalid_callback")
+    }
     const state = deps.oauthStates.consume(parsed.data.state)
     if (state.kind === "rejected")
       return redirectError(reply, deps.config.frontendUrl, "invalid_state")

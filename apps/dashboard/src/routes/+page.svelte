@@ -26,6 +26,14 @@
   const defaultApiUrl = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3000"
   const apiUrlStorageKey = "discord-music.api-url"
   const knownInvalidApiHosts = new Set(["example.com", "example.github.io"])
+  const authErrorCopy: Record<string, string> = {
+    discord_denied: "Sign-in cancelled at Discord",
+    invalid_state: "That sign-in link expired — start again",
+    not_authorized: "Your Discord account is not on the allow list",
+    not_in_guild: "Join the server first, then sign in again",
+    oauth_failed: "Discord rejected the sign-in",
+    invalid_callback: "Discord sent an incomplete callback",
+  }
 
   let apiUrl = $state(defaultApiUrl)
   const isHttpUrl = (value: string): boolean => /^https?:\/\/\S+/.test(value.trim())
@@ -191,7 +199,7 @@
       if (store === null) return
       const fragment = await consumeAuthFragment(window.location, window.history, api.exchange)
       if (fragment.kind === "authenticated") store.save(fragment.session)
-      if (fragment.kind === "error") error = `Sign-in failed: ${fragment.code.replaceAll("_", " ")}. Try again.`
+      if (fragment.kind === "error") error = `Sign-in failed: ${authErrorCopy[fragment.code] ?? fragment.code.replaceAll("_", " ")}. Try again.`
       session = fragment.kind === "authenticated" ? fragment.session : store.load()
       if (session === null) { loading = false; return }
       try { const channelsRequest = api.channels(); applyState(await api.state()); loading = false; channels = await channelsRequest; beginSocket() } catch (caught) { error = explain(caught) } finally { loading = false }

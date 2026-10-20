@@ -491,6 +491,34 @@ describe("Fastify API", () => {
     expect(response.headers.location).toBe("https://music.example.com/#code=code")
   })
 
+  it("Given Discord denies consent When the callback returns Then it redirects with discord_denied", async () => {
+    const { app } = await fixture()
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/discord/callback?error=access_denied&state=random",
+    })
+    expect(response.statusCode).toBe(302)
+    expect(response.headers.location).toBe("https://music.example.com/#error=discord_denied")
+  })
+
+  it("Given a callback carrying an unknown parameter When received Then it still exchanges", async () => {
+    const { app } = await fixture()
+    await app.inject({ method: "GET", url: "/auth/discord" })
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/discord/callback?code=code&state=random&utm_source=discord",
+    })
+    expect(response.statusCode).toBe(302)
+    expect(response.headers.location).toBe("https://music.example.com/#code=code")
+  })
+
+  it("Given a callback missing its code When received Then it redirects with invalid_callback", async () => {
+    const { app } = await fixture()
+    const response = await app.inject({ method: "GET", url: "/auth/discord/callback?state=random" })
+    expect(response.statusCode).toBe(302)
+    expect(response.headers.location).toBe("https://music.example.com/#error=invalid_callback")
+  })
+
   it("Given allowed and foreign origins When requesting Then CORS echoes only the configured origin", async () => {
     const { app } = await fixture()
     const allowed = await app.inject({
