@@ -87,7 +87,7 @@ test("Given representative production controls When pointer and keyboard states 
     name: "Pause playback",
   })
   await hoverButton.hover()
-  await expect(hoverButton).toHaveCSS("background-color", "rgb(65, 79, 141)")
+  await expect(hoverButton).toHaveCSS("background-color", "rgb(220, 203, 245)")
   await hoverButton.screenshot({
     path: "../../.omo/evidence/design-system-matrix-fix/screens/interaction-hover.png",
   })
@@ -100,7 +100,7 @@ test("Given representative production controls When pointer and keyboard states 
   if (activeBox === null) throw new Error("Active transport control has no browser box")
   await page.mouse.move(activeBox.x + activeBox.width / 2, activeBox.y + activeBox.height / 2)
   await page.mouse.down()
-  await expect(activeButton).toHaveCSS("transform", /matrix\(0\.96/)
+  await expect(activeButton).toHaveCSS("transform", /matrix\(0\.94/)
   await activeButton.screenshot({
     path: "../../.omo/evidence/design-system-matrix-fix/screens/interaction-active.png",
   })

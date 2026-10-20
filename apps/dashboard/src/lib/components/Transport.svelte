@@ -19,5 +19,10 @@
   <IconButton label="Stop playback" disabled={!hasCurrent || busy} onclick={() => command("stop")}><Stop size={20} weight="fill" aria-hidden="true" /></IconButton>
 </div>
 <style>
-  .transport{display:flex;align-items:center;justify-content:center;gap:var(--space-2);flex-wrap:wrap}.play{display:grid;place-items:center;inline-size:var(--space-12);block-size:var(--space-12);border:0;border-radius:var(--radius-control);background:var(--indigo-400);color:var(--text-primary)}.play:hover:not(:disabled){background:var(--indigo-300)}.play:active:not(:disabled){transform:scale(.96)}.play:disabled{background:var(--surface-raised);color:var(--text-muted)}
+  .transport{display:flex;align-items:center;justify-content:center;gap:var(--space-3);flex-wrap:wrap}
+  .play{display:grid;place-items:center;inline-size:var(--space-12);block-size:var(--space-12);border:0;border-radius:999px;background:var(--indigo-500);color:var(--surface-canvas);box-shadow:0 10px 28px rgba(196,167,231,.28),inset 0 1px 0 rgba(255,255,255,.28);transition:transform var(--motion-micro),background var(--motion-micro),box-shadow var(--motion-micro)}
+  .play:hover:not(:disabled){background:var(--indigo-600);box-shadow:0 14px 34px rgba(196,167,231,.36)}
+  .play:active:not(:disabled){transform:scale(.94)}
+  .play:disabled{background:var(--surface-raised);color:var(--text-muted);box-shadow:none}
+  @media(prefers-reduced-motion:reduce){.play{transition:none}.play:active:not(:disabled){transform:none}}
 </style>

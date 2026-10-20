@@ -12,7 +12,7 @@
 </span>
 
 <style>
-  .badge { display: inline-flex; min-block-size: var(--target); align-items: center; gap: var(--space-2); color: var(--text-secondary); }
+  .badge { display: inline-flex; min-block-size: var(--target); align-items: center; gap: var(--space-2); color: var(--text-secondary); font-weight: 500; }
   .success { color: var(--status-success); } .warning { color: var(--status-warning); } .error { color: var(--status-error); }
   :global(.spin) { animation: spin var(--motion-standard) linear infinite; }
   @keyframes spin { to { transform: rotate(1turn); } }
