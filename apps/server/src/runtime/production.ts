@@ -15,6 +15,7 @@ import { openPersistence } from "../db/index.js"
 import { secureRandom } from "../db/random.js"
 import { PlayerCommandService } from "../discord/command-service.js"
 import { createCommandRouter } from "../discord/commands.js"
+import { wireDiscordControlLink } from "../discord/control-link.js"
 import { registerInteractionHandler } from "../discord/interaction.js"
 import { wireDiscordPlaybackFailureNotifier } from "../discord/playback-failure-notifier.js"
 import { wireDiscordPresence } from "../discord/presence-publisher.js"
@@ -210,6 +211,14 @@ export async function runProduction(
     (failure) => app.log.error(failure, failure.event),
   )
   wireDiscordPresence(client, player, (error) => app.log.warn({ err: error }, "presence.failed"))
+  wireDiscordControlLink(
+    client,
+    guildId,
+    player,
+    config.frontendUrl,
+    config.controlChannelId,
+    (error) => app.log.warn({ err: error }, "discord.control-link.failed"),
+  )
 
   try {
     await client.login(config.discordToken)
