@@ -340,7 +340,22 @@ for (const width of [375, 768]) {
       name: width < 768 ? "Open queue" : /Queue \(/,
     })
     const closeQueue = page.getByRole("button", { name: "Close queue", exact: true })
-    const queueOverlay = page.locator("aside")
+    // Sample the transition continuously instead of at two fixed frames: a slow CI
+    // compositor can otherwise paint before the first transformed frame.
+    const motionSampled = async (): Promise<boolean> =>
+      page
+        .waitForFunction(
+          () => {
+            const transform = getComputedStyle(
+              document.querySelector("aside") ?? document.body,
+            ).transform
+            return transform !== "none" && transform !== "matrix(1, 0, 0, 1, 0, 0)"
+          },
+          undefined,
+          { timeout: 2_000 },
+        )
+        .then(() => true)
+        .catch(() => false)
 
     await page.waitForFunction(() => {
       const artwork = document.querySelector<HTMLImageElement>(".now img")
@@ -364,18 +379,7 @@ for (const width of [375, 768]) {
     await page.keyboard.press("Enter")
 
     // Then: the sheet/drawer is travelling and the keyboard focus ring is rendered on Close queue.
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(resolve))
-        }),
-    )
-    expect(
-      await queueOverlay.evaluate((aside) => {
-        const transform = getComputedStyle(aside).transform
-        return transform !== "none" && transform !== "matrix(1, 0, 0, 1, 0, 0)"
-      }),
-    ).toBe(true)
+    expect(await motionSampled()).toBe(true)
     await page.screenshot({
       path: `../../.omo/evidence/final-visual-fix/screens/queue-motion-${width}-mid-open.png`,
       fullPage: true,
@@ -390,18 +394,7 @@ for (const width of [375, 768]) {
       fullPage: true,
     })
     await page.keyboard.press("Escape")
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(resolve))
-        }),
-    )
-    expect(
-      await queueOverlay.evaluate((aside) => {
-        const transform = getComputedStyle(aside).transform
-        return transform !== "none" && transform !== "matrix(1, 0, 0, 1, 0, 0)"
-      }),
-    ).toBe(true)
+    expect(await motionSampled()).toBe(true)
     await page.screenshot({
       path: `../../.omo/evidence/final-visual-fix/screens/queue-motion-${width}-mid-close.png`,
       fullPage: true,
