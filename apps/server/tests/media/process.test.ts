@@ -22,7 +22,7 @@ describe("external media processes", () => {
     await expect(pending).rejects.toBeInstanceOf(ExternalProcessError)
   })
 
-  it("refuses remote media that was not given a loopback bridge", () => {
+  it("keeps a remote URL out of FFmpeg arguments", () => {
     // Given
     const url = RemoteMediaUrlSchema.parse(
       "https://rr1---sn-a5mekn7z.googlevideo.com/videoplayback?id=abc",
@@ -44,7 +44,8 @@ describe("external media processes", () => {
       )
 
     // Then
-    expect(build).toThrow(TypeError)
+    expect(build()).toContain("pipe:0")
+    expect(build()).not.toContain(url)
   })
 
   it("uses an authorized loopback bridge for a remote seek", () => {

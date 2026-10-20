@@ -7,7 +7,12 @@ export interface AudioResource {
 }
 
 export interface AudioResourceFactory {
-  create(media: PlayableMedia, offsetMs: number, signal?: AbortSignal): Promise<AudioResource>
+  create(
+    media: PlayableMedia,
+    offsetMs: number,
+    signal?: AbortSignal,
+    durationMs?: number,
+  ): Promise<AudioResource>
 }
 
 export type PlaybackCallbacks = {

@@ -92,7 +92,12 @@ export class PlaybackSession {
     if (start.offsetMs > 0 && !media.seekable) {
       throw new RangeError("Media does not support seeking")
     }
-    const resource = await this.resourceFactory.create(media, start.offsetMs, start.signal)
+    const resource = await this.resourceFactory.create(
+      media,
+      start.offsetMs,
+      start.signal,
+      start.item.track.durationMs,
+    )
     if (!this.isActive(start.generation)) {
       resource.dispose()
       return null
