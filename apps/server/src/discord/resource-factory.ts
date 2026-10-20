@@ -3,7 +3,7 @@ import { type AudioResource, createAudioResource, StreamType } from "@discordjs/
 
 import type { PlayableMedia } from "../media/types.js"
 import type { AudioResourceFactory, AudioResource as PlayerAudioResource } from "../player/ports.js"
-import { bufferDirectStream, openDirectStream, openSeekableMediaProxy } from "./direct-stream.js"
+import { openSeekableMediaProxy } from "./direct-stream.js"
 
 export class DiscordVoiceResource implements PlayerAudioResource {
   readonly audioResource: AudioResource<null>
@@ -27,22 +27,12 @@ export function ffmpegArgs(
 ): readonly string[] {
   const args = ["-nostdin", "-hide_banner", "-loglevel", "error"]
   if (offsetMs > 0) args.push("-ss", (offsetMs / 1_000).toFixed(3))
-  let input: string
-  switch (media.kind) {
-    case "local":
-      input = media.url
-      break
-    case "remote":
-      input = "pipe:0"
-      break
-    default: {
-      const unreachable: never = media
-      throw new TypeError(`Unsupported media kind: ${String(unreachable)}`)
-    }
+  if (media.kind === "remote" && inputOverride === undefined) {
+    throw new TypeError("Remote media requires a proxied input")
   }
   args.push(
     "-i",
-    inputOverride ?? input,
+    inputOverride ?? media.url,
     "-vn",
     "-ac",
     "2",
@@ -63,36 +53,20 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
     offsetMs: number,
     signal?: AbortSignal,
   ): Promise<PlayerAudioResource> {
-    if (
-      offsetMs === 0 &&
-      media.kind === "remote" &&
-      media.container === "webm" &&
-      media.codec === "opus"
-    ) {
-      const stream = await bufferDirectStream(
-        await openDirectStream(media, signal === undefined ? {} : { signal }),
-      )
-      return new DiscordVoiceResource(
-        createAudioResource(stream, { inputType: StreamType.WebmOpus, inlineVolume: true }),
-        () => stream.destroy(),
-      )
-    }
+    // Remote audio is always pulled by ffmpeg through the local proxy instead of
+    // handing a bare node HTTP stream to the 20 ms packet loop: on long, throttled
+    // YouTube downloads the stream underruns, the player misses five frames and
+    // reports the track as finished after about a second. ffmpeg reads ahead and
+    // buffers, so short CDN stalls no longer end playback.
     const seekProxy =
-      media.kind === "remote" && offsetMs > 0
+      media.kind === "remote"
         ? await openSeekableMediaProxy(media, signal === undefined ? {} : { signal })
-        : undefined
-    const remoteStream =
-      media.kind === "remote" && seekProxy === undefined
-        ? await bufferDirectStream(
-            await openDirectStream(media, signal === undefined ? {} : { signal }),
-          )
         : undefined
     const child = spawn("ffmpeg", [...ffmpegArgs(media, offsetMs, seekProxy?.url)], {
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     })
-    if (remoteStream === undefined) child.stdin.end()
-    else remoteStream.pipe(child.stdin)
+    child.stdin.end()
     const abort = () => child.kill("SIGKILL")
     signal?.addEventListener("abort", abort, { once: true })
     const removeAbortListener = () => signal?.removeEventListener("abort", abort)
@@ -101,7 +75,6 @@ export class DiscordAudioResourceFactory implements AudioResourceFactory {
       createAudioResource(child.stdout, { inputType: StreamType.OggOpus, inlineVolume: true }),
       () => {
         removeAbortListener()
-        remoteStream?.destroy()
         seekProxy?.close()
         if (child.exitCode === null) child.kill("SIGKILL")
       },
